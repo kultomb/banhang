@@ -3242,6 +3242,24 @@
                 return profit;
             }
 
+            calcRepairProfit(repair) {
+                let profit = 0;
+                const repairCost = Number(repair.repairCost) || 0;
+                const partsManualCost = Number(repair.partsManualCost) || 0;
+                profit += repairCost;
+                profit += partsManualCost;
+                const products = this.demoData.products || [];
+                (repair.parts || []).forEach(p => {
+                    const prod = products.find(x => x.id === p.productId);
+                    const importPrice = prod && (prod.importPrice != null && prod.importPrice !== '') ? Number(prod.importPrice) : 0;
+                    const qty = p.quantity || 0;
+                    const revenue = (p.price || 0) * qty;
+                    const cost = qty * importPrice;
+                    profit += revenue - cost;
+                });
+                return profit;
+            }
+
             getReportsContent() {
                 this.initFilterState();
                 const fromDate = (this.filterState && this.filterState.fromDate) || this.getDefaultFromDate();
@@ -3268,7 +3286,9 @@
                     return s + repairCost + totalParts + partsManualCost;
                 }, 0);
                 const totalRevenue = filteredOrders.reduce((s, o) => s + (o.total || 0), 0) + repairRevenue;
-                const totalProfit = filteredOrders.reduce((s, o) => s + this.calcOrderProfit(o), 0);
+                const orderProfit = filteredOrders.reduce((s, o) => s + this.calcOrderProfit(o), 0);
+                const repairProfit = filteredRepairs.reduce((s, r) => s + this.calcRepairProfit(r), 0);
+                const totalProfit = orderProfit + repairProfit;
                 const profitFromDebt = filteredOrders.filter(o => o.paymentStatus === 'Công nợ').reduce((s, o) => s + this.calcOrderProfit(o), 0);
                 const profitMargin = totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : 0;
                 return `
@@ -11804,7 +11824,9 @@
                 const orderRevenue = filteredOrders.reduce((sum, order) => sum + (order.total || 0), 0);
                 const totalRevenue = orderRevenue + repairRevenue;
 
-                const totalProfit = filteredOrders.reduce((sum, order) => sum + this.calcOrderProfit(order), 0);
+                const orderProfit = filteredOrders.reduce((sum, order) => sum + this.calcOrderProfit(order), 0);
+                const repairProfit = filteredRepairs.reduce((s, r) => s + this.calcRepairProfit(r), 0);
+                const totalProfit = orderProfit + repairProfit;
                 const profitFromDebt = filteredOrders.filter(o => o.paymentStatus === 'Công nợ').reduce((sum, o) => sum + this.calcOrderProfit(o), 0);
 
                 const totalDebt = filteredOrders.reduce((sum, order) => {
