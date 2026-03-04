@@ -187,26 +187,43 @@
             setMeta(k, v) { this._cache.meta = this._cache.meta || {}; this._cache.meta[k] = v; }
         };
 
-        window.companyAssets = { logo: null, qr: null };
-        setInterval(function() {
+        // XSS protection - escape user content for safe HTML
+        function escapeHtml(str) {
+            if (str == null || str === undefined) return '';
+            const s = String(str);
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+        // Validate image URL - only allow https or data:image for logo/QR
+        function isSafeImageUrl(url) {
+            if (!url || typeof url !== 'string') return false;
+            const u = url.trim().toLowerCase();
+            return u.startsWith('https://') || u.startsWith('data:image/');
+        }
+        // Event-based update for company logo/QR (gọi khi load page company-info hoặc sau khi lưu)
+        function updateCompanyAssets() {
             const company = window.FirebaseStorage.getCompany();
             const logo = company.logo || null;
             const qr = company.qrCode || company.qr || null;
-            if (logo) {
+            if (logo && isSafeImageUrl(logo)) {
+                window.companyAssets = window.companyAssets || {};
                 window.companyAssets.logo = logo;
                 const logoDisplay = document.getElementById('logo-display');
                 if (logoDisplay && !logoDisplay.innerHTML.includes('<img')) {
-                    logoDisplay.innerHTML = `<img src="${logo}" alt="Logo" style="max-width: 100%; max-height: 140px; object-fit: contain;">`;
+                    logoDisplay.innerHTML = '<img src="' + logo.replace(/"/g, '&quot;') + '" alt="Logo" style="max-width: 100%; max-height: 140px; object-fit: contain;">';
                 }
             }
-            if (qr) {
+            if (qr && isSafeImageUrl(qr)) {
+                window.companyAssets = window.companyAssets || {};
                 window.companyAssets.qr = qr;
                 const qrDisplay = document.getElementById('qr-display');
                 if (qrDisplay && !qrDisplay.innerHTML.includes('<img')) {
-                    qrDisplay.innerHTML = `<img src="${qr}" alt="QR Code" style="max-width: 100%; max-height: 140px; object-fit: contain;">`;
+                    qrDisplay.innerHTML = '<img src="' + qr.replace(/"/g, '&quot;') + '" alt="QR Code" style="max-width: 100%; max-height: 140px; object-fit: contain;">';
                 }
             }
-        }, 3000);
+        }
+
+        window.companyAssets = { logo: null, qr: null };
+        setInterval(function() { updateCompanyAssets(); }, 30000);
         
         // Vietnamese PhuocIT - Dữ liệu lưu trên Firebase, không dùng localStorage
         class HamobileBanhang {
@@ -218,6 +235,8 @@
                 this.productsCategoryFilter = '';
                 this.demoData = this.generateDemoData(); // Tạm dùng demo cho đến khi load xong
                 this._ready = false;
+                this._saveDebounceTimer = null;
+                this._saveDebounceMs = 500;
                 this.initAsync();
             }
             
@@ -804,7 +823,7 @@
                     content = this.getPageContent(pageName);
                 } catch (err) {
                     console.error('Lỗi load trang', pageName, err);
-                    content = `<div class="fade-in" style="padding: 24px; color: #dc2626;"><h3>⚠️ Lỗi tải trang</h3><p>${err && err.message ? err.message : 'Vui lòng thử lại hoặc tải lại trang.'}</p></div>`;
+                    content = `<div class="fade-in" style="padding: 24px; color: #dc2626;"><h3>⚠️ Lỗi tải trang</h3><p>${escapeHtml(err && err.message ? err.message : 'Vui lòng thử lại hoặc tải lại trang.')}</p></div>`;
                 }
                 const titles = this.getPageTitles(pageName);
                 
@@ -1012,26 +1031,26 @@
                     
                     // Thông tin bổ sung cho doanh nghiệp
                     const companyInfo = customer.type === 'doanh-nghiep' && customer.companyName ? 
-                        ` | Công ty: ${customer.companyName}` : '';
+                        ` | Công ty: ${escapeHtml(customer.companyName)}` : '';
                     const departmentInfo = customer.type === 'doanh-nghiep' && customer.department ? 
-                        ` | Phòng ban: ${customer.department}` : '';
+                        ` | Phòng ban: ${escapeHtml(customer.department)}` : '';
                     const taxCodeInfo = customer.type === 'doanh-nghiep' && customer.taxCode ? 
-                        ` | MST: ${customer.taxCode}` : '';
+                        ` | MST: ${escapeHtml(customer.taxCode)}` : '';
                     
                     return `
                         <div class="activity-item customer-card">
                             <div class="customer-card-header">
                                 <div class="activity-icon ${iconClass}">${iconSymbol}</div>
                                 <div class="customer-card-main">
-                                    <div class="activity-title">${customer.name} <span class="customer-id">(${customer.id})</span></div>
+                                    <div class="activity-title">${escapeHtml(customer.name)} <span class="customer-id">(${escapeHtml(customer.id)})</span></div>
                                     <div class="activity-desc customer-type">${typeDisplay}${companyInfo}${departmentInfo}${taxCodeInfo}</div>
                                 </div>
                                 <div class="customer-debt-badge ${customer.debt > 0 ? 'has-debt' : ''}">${customer.debt > 0 ? (customer.debt.toLocaleString('vi-VN') + ' đ') : 'Không nợ'}</div>
                             </div>
                             <div class="customer-card-contact">
-                                <div class="activity-desc">📞 ${customer.phone || '—'}</div>
-                                <div class="activity-desc">📧 ${customer.email || '—'}</div>
-                                <div class="activity-desc">📍 ${customer.address || '—'}</div>
+                                <div class="activity-desc">📞 ${escapeHtml(customer.phone || '—')}</div>
+                                <div class="activity-desc">📧 ${escapeHtml(customer.email || '—')}</div>
+                                <div class="activity-desc">📍 ${escapeHtml(customer.address || '—')}</div>
                             </div>
                             <div class="customer-card-actions">
                                 <button type="button" class="btn-customer-detail" onclick="app.showCustomerDetails(${index})">Chi tiết</button>
@@ -1087,10 +1106,10 @@
                         <div class="activity-item">
                             <div class="activity-icon ${supplier.type === 'doanh-nghiep' ? 'warning' : 'success'}">🏢</div>
                             <div class="activity-content">
-                                <div class="activity-title">${supplier.name} (${supplier.id})</div>
+                                <div class="activity-title">${escapeHtml(supplier.name)} (${escapeHtml(supplier.id)})</div>
                                 <div class="activity-desc">${typeDisplay}${codeDisplay}${taxDisplay}</div>
-                                <div class="activity-desc">📞 ${supplier.phone} | 📧 ${supplier.email || 'Chưa có'}${bankDisplay}</div>
-                                ${supplier.notes ? `<div class="activity-desc">📝 ${supplier.notes}</div>` : ''}
+                                <div class="activity-desc">📞 ${escapeHtml(supplier.phone)} | 📧 ${escapeHtml(supplier.email || 'Chưa có')}${bankDisplay}</div>
+                                ${supplier.notes ? `<div class="activity-desc">📝 ${escapeHtml(supplier.notes)}</div>` : ''}
                             </div>
                             <div style="display: flex; gap: 8px; align-items: center;">
                                 <div class="activity-time">${supplier.products}</div>
@@ -1249,8 +1268,8 @@
                     const importPriceCell = importPrice > 0 ? importPrice.toLocaleString('vi-VN') : '-';
                     return `<tr style="${index % 2 === 0 ? 'background: #fafbfc;' : 'background: white;'}">
                             <td style="padding: 12px; border-bottom: 1px solid #f1f5f9; vertical-align: middle;"><input type="checkbox" data-product-id="${(product.id || '').replace(/"/g, '&quot;').replace(/'/g, '&#39;')}" ${checked ? 'checked' : ''} onchange="app.toggleProductSelect(this.getAttribute('data-product-id'), this.checked)" style="width: 18px; height: 18px; cursor: pointer;"></td>
-                            <td style="padding: 12px; border-bottom: 1px solid #f1f5f9;"><div style="font-weight: 600; color: #1f2937;">${product.name}</div></td>
-                            <td style="padding: 12px; border-bottom: 1px solid #f1f5f9; font-size: 13px; color: #6b7280;">${product.category || '-'}</td>
+                            <td style="padding: 12px; border-bottom: 1px solid #f1f5f9;"><div style="font-weight: 600; color: #1f2937;">${escapeHtml(product.name)}</div></td>
+                            <td style="padding: 12px; border-bottom: 1px solid #f1f5f9; font-size: 13px; color: #6b7280;">${escapeHtml(product.category || '-')}</td>
                             <td style="padding: 12px; border-bottom: 1px solid #f1f5f9; font-weight: 500;">${priceCell}</td>
                             <td style="padding: 12px; border-bottom: 1px solid #f1f5f9;">${importPriceCell}</td>
                             <td style="padding: 12px; border-bottom: 1px solid #f1f5f9;">${profitCell}</td>
@@ -1488,7 +1507,7 @@
                                     const min = (p.hasImei && p.imeis) ? 0 : (p.minStock ?? 10);
                                     return `
                                     <div style="background: white; padding: 12px; border-radius: 8px; border: 1px solid #f59e0b;">
-                                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 4px;">${p.name}</div>
+                                        <div style="font-weight: 600; color: #1f2937; margin-bottom: 4px;">${escapeHtml(p.name)}</div>
                                         <div style="color: #ef4444; font-size: 14px;">Tồn: ${stock} / Tối thiểu: ${min}</div>
                                         <div style="color: #6b7280; font-size: 12px;">Cần nhập: ${Math.max(0, min - stock + 10)} sản phẩm</div>
                                     </div>
@@ -1585,8 +1604,8 @@
                                     return `
                                         <div style="display: grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr 100px; gap: 16px; padding: 16px; border-bottom: 1px solid #f1f5f9; align-items: center; ${index % 2 === 0 ? 'background: #fafbfc;' : 'background: white;'}">
                                             <div>
-                                                <div style="font-weight: 600; color: #1f2937; margin-bottom: 4px;">${product.name}</div>
-                                                <div style="font-size: 12px; color: #6b7280;">${product.id} • ${product.category}</div>
+                                                <div style="font-weight: 600; color: #1f2937; margin-bottom: 4px;">${escapeHtml(product.name)}</div>
+                                                <div style="font-size: 12px; color: #6b7280;">${escapeHtml(product.id)} • ${escapeHtml(product.category)}</div>
                                             </div>
                                             <div style="font-weight: 500; color: #1f2937;">
                                                 ${product.price.toLocaleString('vi-VN')} VNĐ
@@ -2170,8 +2189,8 @@
                                 <div class="activity-item">
                                     <div class="activity-icon warning">💳</div>
                                     <div class="activity-content">
-                                        <div class="activity-title">${customer.name} (${customer.id})</div>
-                                        <div class="activity-desc">📞 ${customer.phone} | 📍 ${customer.address}</div>
+                                        <div class="activity-title">${escapeHtml(customer.name)} (${escapeHtml(customer.id)})</div>
+                                        <div class="activity-desc">📞 ${escapeHtml(customer.phone)} | 📍 ${escapeHtml(customer.address)}</div>
                                     </div>
                                     <div style="display: flex; gap: 8px; align-items: center;">
                                         <div class="activity-time" style="color: #dc2626; font-weight: bold;">
@@ -2251,7 +2270,7 @@
                     <tr data-order-index="${originalIndex}">
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${order.id}</td>
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${order.customerName}</td>
-                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; max-width: 260px; font-size: 13px;" title="${((order.products || []).map(p => (p.name || p.productName || '') + ' x' + (p.quantity || 1)).join(', ')).replace(/"/g, '&quot;')}">${((order.products || []).map(p => (p.name || p.productName || '-') + ' x' + (p.quantity || 1)).join(', ') || '-')}</td>
+                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; max-width: 260px; font-size: 13px;" title="${escapeHtml((order.products || []).map(p => (p.name || p.productName || '') + ' x' + (p.quantity || 1)).join(', '))}">${escapeHtml((order.products || []).map(p => (p.name || p.productName || '-') + ' x' + (p.quantity || 1)).join(', ') || '-')}</td>
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${order.date} ${order.time}</td>
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${order.total.toLocaleString('vi-VN')} VNĐ</td>
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${order.paymentMethod}</td>
@@ -2385,7 +2404,7 @@
                     <tr data-repair-index="${index}" style="vertical-align: middle;">
                         <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; white-space: nowrap;">${r.id || 'SC' + String(index + 1).padStart(4, '0')}</td>
                         <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${(r.customerName || '-').replace(/"/g, '&quot;')}">${r.customerName || '-'}</td>
-                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; white-space: nowrap;">${r.phone || '-'}</td>
+                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; white-space: nowrap;">${escapeHtml(r.phone || '-')}</td>
                         <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${desc.replace(/"/g, '&quot;')}">${descShort}</td>
                         <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; white-space: nowrap;">${r.warrantyPeriod || '-'}</td>
                         <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; white-space: nowrap;">${r.date || '-'}</td>
@@ -2482,7 +2501,7 @@
 
             showAddRepairForm() {
                 const customerOptions = (this.demoData.customers || []).map(c =>
-                    `<option value="${c.id}" data-phone="${(c.phone || '').replace(/"/g, '&quot;')}" data-address="${(c.address || '').replace(/"/g, '&quot;')}">${c.name}</option>`
+                    `<option value="${escapeHtml(c.id)}" data-phone="${escapeHtml(c.phone || '')}" data-address="${escapeHtml(c.address || '')}">${escapeHtml(c.name)}</option>`
                 ).join('');
                 const formHTML = `
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this && window._modalMousedownTarget===this) closeModal(this)">
@@ -2565,7 +2584,7 @@
                                                         <input type="text" class="dropdown-search" placeholder="🔍 Tìm sản phẩm..." style="width: 100%; padding: 6px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px;" oninput="app.filterRepairPartDropdown(this)" onclick="event.stopPropagation()">
                                                     </div>
                                                     <div class="dropdown-options">
-                                                        ${(this.demoData.products || []).map(p => `<div class="dropdown-option" data-value="${p.id}" data-category="${(p.category||'').replace(/"/g,'&quot;')}" data-price="${p.price||0}" style="padding: 10px; cursor: pointer; border-bottom: 1px solid #f3f4f6;" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='white'" onclick="app.selectRepairProduct(this, '${p.id}', '${(p.name||'').replace(/'/g,"\\'")} - ${(p.price||0).toLocaleString('vi-VN')} đ', ${p.price||0})">${(p.name||'').replace(/</g,'&lt;')} - ${(p.price||0).toLocaleString('vi-VN')} đ (${p.category||'-'})</div>`).join('')}
+                                                        ${(this.demoData.products || []).map(p => `<div class="dropdown-option" data-value="${escapeHtml(p.id)}" data-category="${escapeHtml(p.category||'')}" data-price="${p.price||0}" style="padding: 10px; cursor: pointer; border-bottom: 1px solid #f3f4f6;" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='white'" onclick="app.selectRepairProduct(this, '${escapeHtml(p.id)}', '${(p.name||'').replace(/'/g,"\\'")} - ${(p.price||0).toLocaleString('vi-VN')} đ', ${p.price||0})">${escapeHtml(p.name||'')} - ${(p.price||0).toLocaleString('vi-VN')} đ (${escapeHtml(p.category||'-')})</div>`).join('')}
                                                     </div>
                                                 </div>
                                                 <input type="hidden" name="partProductId_0" value="">
@@ -2691,7 +2710,7 @@
                 if (!container) return;
                 const rowCount = container.querySelectorAll('.repair-part-row').length;
                 const products = this.demoData.products || [];
-                const optsHtml = products.map(p => `<div class="dropdown-option" data-value="${p.id}" data-category="${(p.category||'').replace(/"/g,'&quot;')}" data-price="${p.price||0}" style="padding: 10px; cursor: pointer; border-bottom: 1px solid #f3f4f6;" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='white'" onclick="app.selectRepairProduct(this, '${p.id}', '${(p.name||'').replace(/'/g,"\\'")} - ${(p.price||0).toLocaleString('vi-VN')} đ', ${p.price||0})">${(p.name||'').replace(/</g,'&lt;')} - ${(p.price||0).toLocaleString('vi-VN')} đ (${p.category||'-'})</div>`).join('');
+                const optsHtml = products.map(p => `<div class="dropdown-option" data-value="${escapeHtml(p.id)}" data-category="${escapeHtml(p.category||'')}" data-price="${p.price||0}" style="padding: 10px; cursor: pointer; border-bottom: 1px solid #f3f4f6;" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='white'" onclick="app.selectRepairProduct(this, '${escapeHtml(p.id)}', '${(p.name||'').replace(/'/g,"\\'")} - ${(p.price||0).toLocaleString('vi-VN')} đ', ${p.price||0})">${escapeHtml(p.name||'')} - ${(p.price||0).toLocaleString('vi-VN')} đ (${escapeHtml(p.category||'-')})</div>`).join('');
                 const div = document.createElement('div');
                 div.className = 'repair-part-row';
                 div.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center;';
@@ -2827,7 +2846,7 @@
 
                 const partsList = (r.parts || []).length === 0 ? '<em>Không có</em>' : (r.parts || []).map(p =>
                     `<div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #e5e7eb;">
-                        <span>🔧 ${p.name} x ${p.quantity || 1}</span>
+                        <span>🔧 ${escapeHtml(p.name)} x ${p.quantity || 1}</span>
                         <span>${((p.quantity || 0) * (p.price || 0)).toLocaleString('vi-VN')} đ</span>
                     </div>`
                 ).join('');
@@ -2841,8 +2860,8 @@
                         <div style="background: white; padding: 32px; border-radius: 12px; width: 500px; max-width: 90vw; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation()">
                             <h3 style="margin-bottom: 24px; color: var(--text-primary);">Chi tiết phiếu ${r.id || ('SC' + String(index + 1).padStart(4, '0'))}</h3>
                             <div style="margin-bottom: 12px;"><strong>Khách hàng:</strong> ${r.customerName || '-'}</div>
-                            <div style="margin-bottom: 12px;"><strong>SĐT:</strong> ${r.phone || '-'}</div>
-                            <div style="margin-bottom: 12px;"><strong>Địa chỉ:</strong> ${r.address || '-'}</div>
+                            <div style="margin-bottom: 12px;"><strong>SĐT:</strong> ${escapeHtml(r.phone || '-')}</div>
+                            <div style="margin-bottom: 12px;"><strong>Địa chỉ:</strong> ${escapeHtml(r.address || '-')}</div>
                             ${r.deviceName ? `<div style="margin-bottom: 12px;"><strong>Tên thiết bị:</strong> ${r.deviceName.replace(/</g, '&lt;')}</div>` : ''}
                             <div style="margin-bottom: 12px;"><strong>Mô tả tình trạng lỗi:</strong> ${(r.repairDescription || '-').replace(/</g, '&lt;')}</div>
                             ${r.imei ? `<div style="margin-bottom: 12px;"><strong>IMEI:</strong> ${r.imei.replace(/</g, '&lt;')}</div>` : ''}
@@ -2865,7 +2884,7 @@
                             <div style="margin-bottom: 12px;"><strong>Ngày:</strong> ${r.date || '-'} ${r.time || ''}</div>
                             <div style="margin-bottom: 12px;"><strong>Trạng thái:</strong> ${r.status || '-'}</div>
                             ${(r.status || '') === 'Đã trả' ? `<div style="margin-bottom: 12px;"><strong>Thanh toán:</strong> ${(r.paymentStatus || '-')} ${r.paymentStatus === 'Công nợ' && (Number(r.repairCost) || 0) - (Number(r.amountPaid) ?? 0) > 0 ? ' (Còn nợ: ' + ((Number(r.repairCost) || 0) - (Number(r.amountPaid) ?? 0)).toLocaleString('vi-VN') + ' đ)' : ''}</div>` : ''}
-                            ${r.notes ? `<div style="margin-bottom: 12px;"><strong>Ghi chú:</strong> ${r.notes}</div>` : ''}
+                            ${r.notes ? `<div style="margin-bottom: 12px;"><strong>Ghi chú:</strong> ${escapeHtml(r.notes)}</div>` : ''}
                             <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
                                 <button onclick="closeModal(this.closest('div[style*=fixed]')); app.printRepair(${index});" style="padding: 12px 24px; background: var(--primary-green); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">🖨️ In</button>
                                 <button onclick="closeModal(this.closest('div[style*=fixed]')); app.editRepair(${index});" style="padding: 12px 24px; background: var(--primary-blue); color: white; border: none; border-radius: 8px; cursor: pointer;">✏️ Sửa</button>
@@ -2882,10 +2901,10 @@
                 if (!r) return;
 
                 const customerOptions = (this.demoData.customers || []).map(c =>
-                    `<option value="${c.id}" ${(r.customerId === c.id || r.customerName === c.name) ? 'selected' : ''} data-phone="${(c.phone || '').replace(/"/g, '&quot;')}" data-address="${(c.address || '').replace(/"/g, '&quot;')}">${c.name}</option>`
+                    `<option value="${escapeHtml(c.id)}" ${(r.customerId === c.id || r.customerName === c.name) ? 'selected' : ''} data-phone="${escapeHtml(c.phone || '')}" data-address="${escapeHtml(c.address || '')}">${escapeHtml(c.name)}</option>`
                 ).join('');
                 const products = this.demoData.products || [];
-                const optsHtml = products.map(p => `<div class="dropdown-option" data-value="${p.id}" data-category="${(p.category||'').replace(/"/g,'&quot;')}" data-price="${p.price||0}" style="padding: 10px; cursor: pointer; border-bottom: 1px solid #f3f4f6;" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='white'" onclick="app.selectRepairProduct(this, '${p.id}', '${(p.name||'').replace(/'/g,"\\'")} - ${(p.price||0).toLocaleString('vi-VN')} đ', ${p.price||0})">${(p.name||'').replace(/</g,'&lt;')} - ${(p.price||0).toLocaleString('vi-VN')} đ (${p.category||'-'})</div>`).join('');
+                const optsHtml = products.map(p => `<div class="dropdown-option" data-value="${escapeHtml(p.id)}" data-category="${escapeHtml(p.category||'')}" data-price="${p.price||0}" style="padding: 10px; cursor: pointer; border-bottom: 1px solid #f3f4f6;" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='white'" onclick="app.selectRepairProduct(this, '${escapeHtml(p.id)}', '${(p.name||'').replace(/'/g,"\\'")} - ${(p.price||0).toLocaleString('vi-VN')} đ', ${p.price||0})">${escapeHtml(p.name||'')} - ${(p.price||0).toLocaleString('vi-VN')} đ (${escapeHtml(p.category||'-')})</div>`).join('');
                 const partRows = (r.parts || []).map((p, i) => {
                     const prod = p.productId ? products.find(x => x.id === p.productId) : null;
                     const displayName = prod ? `${(prod.name||'').replace(/</g,'&lt;')} - ${(prod.price||0).toLocaleString('vi-VN')} đ` : (p.name||'').replace(/</g,'&lt;');
@@ -3061,7 +3080,7 @@
                 if (!container) return;
                 const rowCount = container.querySelectorAll('.repair-part-row').length;
                 const products = this.demoData.products || [];
-                const optsHtml = products.map(p => `<div class="dropdown-option" data-value="${p.id}" data-category="${(p.category||'').replace(/"/g,'&quot;')}" data-price="${p.price||0}" style="padding: 10px; cursor: pointer; border-bottom: 1px solid #f3f4f6;" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='white'" onclick="app.selectRepairProduct(this, '${p.id}', '${(p.name||'').replace(/'/g,"\\'")} - ${(p.price||0).toLocaleString('vi-VN')} đ', ${p.price||0})">${(p.name||'').replace(/</g,'&lt;')} - ${(p.price||0).toLocaleString('vi-VN')} đ (${p.category||'-'})</div>`).join('');
+                const optsHtml = products.map(p => `<div class="dropdown-option" data-value="${escapeHtml(p.id)}" data-category="${escapeHtml(p.category||'')}" data-price="${p.price||0}" style="padding: 10px; cursor: pointer; border-bottom: 1px solid #f3f4f6;" onmouseover="this.style.background='#f3f4f6'" onmouseout="this.style.background='white'" onclick="app.selectRepairProduct(this, '${escapeHtml(p.id)}', '${(p.name||'').replace(/'/g,"\\'")} - ${(p.price||0).toLocaleString('vi-VN')} đ', ${p.price||0})">${escapeHtml(p.name||'')} - ${(p.price||0).toLocaleString('vi-VN')} đ (${escapeHtml(p.category||'-')})</div>`).join('');
                 const div = document.createElement('div');
                 div.className = 'repair-part-row';
                 div.style.cssText = 'display: flex; gap: 8px; margin-bottom: 8px; align-items: center;';
@@ -3981,7 +4000,7 @@
                 `;
                 } catch (err) {
                     console.error('getSettingsContent error:', err);
-                    return `<div class="quick-actions" style="padding: 24px;"><h2 class="section-title">⚙️ Cài đặt</h2><p style="color: #dc2626;">Đã xảy ra lỗi khi tải trang cài đặt: ${(err && err.message) || 'Lỗi không xác định'}</p><button onclick="app.loadPage('settings')" style="margin-top: 16px; padding: 10px 20px; background: var(--primary-green); color: white; border: none; border-radius: 8px; cursor: pointer;">Thử lại</button></div>`;
+                    return `<div class="quick-actions" style="padding: 24px;"><h2 class="section-title">⚙️ Cài đặt</h2><p style="color: #dc2626;">Đã xảy ra lỗi khi tải trang cài đặt: ${escapeHtml((err && err.message) || 'Lỗi không xác định')}</p><button onclick="app.loadPage('settings')" style="margin-top: 16px; padding: 10px 20px; background: var(--primary-green); color: white; border: none; border-radius: 8px; cursor: pointer;">Thử lại</button></div>`;
                 }
             }
             
@@ -4326,7 +4345,7 @@
                                 <!-- Hàng 1: Tên khách hàng -->
                                 <div style="margin-bottom: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Tên khách hàng: *</label>
-                                    <input type="text" name="name" value="${customer.name}" required 
+                                    <input type="text" name="name" value="${escapeHtml(customer.name)}" required 
                                            style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
                                 </div>
 
@@ -4350,7 +4369,7 @@
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
                                     <div>
                                         <label style="display: block; margin-bottom: 8px; font-weight: 600;">Số điện thoại:</label>
-                                        <input type="tel" name="phone" value="${customer.phone || ''}"
+                                        <input type="tel" name="phone" value="${escapeHtml(customer.phone || '')}"
                                                style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
                                     </div>
                                     <div id="edit-tax-field" style="display: ${taxDisplay};">
@@ -4371,14 +4390,14 @@
                                 <div style="margin-bottom: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Địa chỉ:</label>
                                     <textarea name="address" rows="2"
-                                              style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; resize: vertical;">${customer.address || ''}</textarea>
+                                              style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; resize: vertical;">${escapeHtml(customer.address || '')}</textarea>
                                 </div>
 
                                 <!-- Hàng 6: Ghi chú -->
                                 <div style="margin-bottom: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Ghi chú khách hàng:</label>
                                     <textarea name="notes" rows="3" placeholder="Nhập ghi chú về khách hàng (không bắt buộc)"
-                                              style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; resize: vertical;">${customer.notes || ''}</textarea>
+                                              style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; resize: vertical;">${escapeHtml(customer.notes || '')}</textarea>
                                 </div>
 
                                 <!-- Hàng 7: Công nợ -->
@@ -4519,7 +4538,7 @@
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this && window._modalMousedownTarget===this) closeModal(this)">
                         <div style="background: white; padding: 32px; border-radius: 12px; width: 800px; max-width: 95vw; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation()">
                             <h3 style="margin-bottom: 24px; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
-                                <span>👤</span> Chi tiết khách hàng: ${customer.name}
+                                <span>👤</span> Chi tiết khách hàng: ${escapeHtml(customer.name)}
                             </h3>
                             
                             <!-- Thông tin cơ bản -->
@@ -4530,14 +4549,14 @@
                                 </h4>
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
                                     <div><strong>Mã KH:</strong> ${customer.id}</div>
-                                    <div><strong>Tên:</strong> ${customer.name}</div>
+                                    <div><strong>Tên:</strong> ${escapeHtml(customer.name)}</div>
                                     ${customer.type === 'doanh-nghiep' && customer.companyName ? `<div><strong>Tên công ty:</strong> ${customer.companyName}</div>` : ''}
                                     ${customer.type === 'doanh-nghiep' && customer.department ? `<div><strong>Phòng ban:</strong> ${customer.department}</div>` : ''}
-                                    <div><strong>Điện thoại:</strong> ${customer.phone}</div>
+                                    <div><strong>Điện thoại:</strong> ${escapeHtml(customer.phone)}</div>
                                     <div><strong>Email:</strong> ${customer.email || 'Chưa có'}</div>
                                     ${customer.type === 'doanh-nghiep' && customer.taxCode ? `<div style="grid-column: 1 / -1;"><strong>Mã số thuế:</strong> ${customer.taxCode}</div>` : ''}
-                                    <div style="grid-column: 1 / -1;"><strong>Địa chỉ:</strong> ${customer.address || 'Chưa có'}</div>
-                                    ${customer.notes ? `<div style="grid-column: 1 / -1;"><strong>Ghi chú:</strong> ${customer.notes}</div>` : ''}
+                                    <div style="grid-column: 1 / -1;"><strong>Địa chỉ:</strong> ${escapeHtml(customer.address || 'Chưa có')}</div>
+                                    ${customer.notes ? `<div style="grid-column: 1 / -1;"><strong>Ghi chú:</strong> ${escapeHtml(customer.notes)}</div>` : ''}
                                 </div>
                             </div>
                             
@@ -5398,15 +5417,15 @@
                             <div class="customer-card-header">
                                 <div class="activity-icon ${iconClass}">${iconSymbol}</div>
                                 <div class="customer-card-main">
-                                    <div class="activity-title">${customer.name} <span class="customer-id">(${customer.id})</span></div>
+                                    <div class="activity-title">${escapeHtml(customer.name)} <span class="customer-id">(${escapeHtml(customer.id)})</span></div>
                                     <div class="activity-desc customer-type">${typeDisplay}${companyInfo}${departmentInfo}${taxCodeInfo}</div>
                                 </div>
                                 <div class="customer-debt-badge ${customer.debt > 0 ? 'has-debt' : ''}">${customer.debt > 0 ? (customer.debt.toLocaleString('vi-VN') + ' đ') : 'Không nợ'}</div>
                             </div>
                             <div class="customer-card-contact">
-                                <div class="activity-desc">📞 ${customer.phone || '—'}</div>
-                                <div class="activity-desc">📧 ${customer.email || '—'}</div>
-                                <div class="activity-desc">📍 ${customer.address || '—'}</div>
+                                <div class="activity-desc">📞 ${escapeHtml(customer.phone || '—')}</div>
+                                <div class="activity-desc">📧 ${escapeHtml(customer.email || '—')}</div>
+                                <div class="activity-desc">📍 ${escapeHtml(customer.address || '—')}</div>
                             </div>
                             <div class="customer-card-actions">
                                 <button type="button" class="btn-customer-detail" onclick="app.showCustomerDetails(${idx})">Chi tiết</button>
@@ -5449,7 +5468,7 @@
                         <div class="activity-item">
                             <div class="activity-icon ${stockStatus}">📦</div>
                             <div class="activity-content">
-                                <div class="activity-title">${product.name} (${product.id})</div>
+                                <div class="activity-title">${escapeHtml(product.name)} (${escapeHtml(product.id)})</div>
                                 <div class="activity-desc">
                                     💰 ${product.price.toLocaleString('vi-VN')} VNĐ 
                                     | 📂 ${product.category || 'Chưa phân loại'} 
@@ -5573,13 +5592,23 @@
                 return valid;
             }
             
-            saveToFirebase() {
+            saveToFirebaseImmediate() {
                 window.FirebaseStorage.setData(this.demoData);
                 return window.FirebaseStorage.save({ data: this.demoData });
             }
-            saveToLocalStorage() {
-                return this.saveToFirebase();
+            saveToFirebase() {
+                const app = this;
+                if (app._saveDebounceTimer) clearTimeout(app._saveDebounceTimer);
+                app._saveDebounceTimer = setTimeout(async () => {
+                    app._saveDebounceTimer = null;
+                    window.FirebaseStorage.setData(app.demoData);
+                    const ok = await window.FirebaseStorage.save({ data: app.demoData });
+                    if (!ok && window.app) {
+                        window.app.showNotification('Lỗi lưu dữ liệu. Kiểm tra kết nối mạng và Firebase.', 'error');
+                    }
+                }, app._saveDebounceMs);
             }
+            saveToLocalStorage() { this.saveToFirebase(); }
             
             async loadFromFirebaseStorage() {
                 const loaded = await window.FirebaseStorage.load();
@@ -5606,6 +5635,8 @@
                     if (ok && this.currentPage === 'settings') {
                         const el = document.getElementById('firebase-sync-status');
                         if (el) el.textContent = 'Đồng bộ lúc: ' + new Date().toLocaleString('vi-VN');
+                    } else if (!ok && window.app) {
+                        window.app.showNotification('Lỗi đồng bộ Firebase. Kiểm tra kết nối mạng.', 'error');
                     }
                 });
             }
@@ -5760,7 +5791,7 @@
                         if (!this.demoData.products) this.demoData.products = [];
                         
                         this.showNotification('Đang lưu lên Firebase...', 'info');
-                        const ok = await this.saveToLocalStorage();
+                        const ok = await this.saveToFirebaseImmediate();
                         if (ok) {
                             this.showNotification('Đã khôi phục và lưu lên đám mây. Load lại trang vẫn giữ dữ liệu.', 'success');
                             this.loadPage(this.currentPage);
@@ -5878,30 +5909,8 @@
                 return `${(total / 1024).toFixed(1)} KB`;
             }
 
-            // Restore logo and QR after page load
             restoreLogoAndQR() {
-                console.log('=== RESTORING LOGO/QR AFTER PAGE LOAD ===');
-                const companySettings = this.getCompanySettings();
-                
-                // Restore logo if exists
-                if (companySettings.logo) {
-                    const logoDisplay = document.getElementById('logo-display');
-                    if (logoDisplay) {
-                        logoDisplay.innerHTML = `<img src="${companySettings.logo}" alt="Logo" style="max-width: 100%; max-height: 140px; object-fit: contain;">`;
-                        console.log('✅ Logo restored successfully');
-                    }
-                }
-                
-                // Restore QR if exists  
-                if (companySettings.qrCode) {
-                    const qrDisplay = document.getElementById('qr-display');
-                    if (qrDisplay) {
-                        qrDisplay.innerHTML = `<img src="${companySettings.qrCode}" alt="QR Code" style="max-width: 100%; max-height: 140px; object-fit: contain;">`;
-                        console.log('✅ QR Code restored successfully');
-                    }
-                }
-                
-                console.log('Restore complete - Logo:', !!companySettings.logo, 'QR:', !!companySettings.qrCode);
+                updateCompanyAssets();
             }
 
             // Compress image before saving to Firebase
@@ -5966,8 +5975,7 @@
                     company.logo = imageData;
                     window.FirebaseStorage.setCompany(company);
                     window.FirebaseStorage.save({ company });
-                    const logoDisplay = document.getElementById('logo-display');
-                    if (logoDisplay) logoDisplay.innerHTML = `<img src="${imageData}" alt="Logo" style="max-width: 100%; max-height: 140px; object-fit: contain;">`;
+                    updateCompanyAssets();
                     alert('✅ Upload logo thành công! Logo đã lưu lên Firebase.');
                 };
                 reader.readAsDataURL(file);
@@ -5992,8 +6000,7 @@
                     company.qrCode = imageData;
                     window.FirebaseStorage.setCompany(company);
                     window.FirebaseStorage.save({ company });
-                    const qrDisplay = document.getElementById('qr-display');
-                    if (qrDisplay) qrDisplay.innerHTML = `<img src="${imageData}" alt="QR Code" style="max-width: 100%; max-height: 140px; object-fit: contain;">`;
+                    updateCompanyAssets();
                     alert('✅ Upload QR code thành công! QR đã lưu lên Firebase.');
                 };
                 reader.readAsDataURL(file);
