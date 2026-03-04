@@ -236,6 +236,40 @@
                     window.companyAssets.logo = loaded.company?.logo || null;
                     window.companyAssets.qr = loaded.company?.qrCode || loaded.company?.qr || null;
                     this.migrateProductData();
+                } else if (!window._lastFirebaseError) {
+                    // Firebase trả về null = đường dẫn chưa tồn tại (khóa mới, database trống)
+                    // Khởi tạo dữ liệu mẫu và lưu lên Firebase
+                    if (content) content.innerHTML = '<div style="padding: 48px; text-align: center;"><p>Khởi tạo dữ liệu mới cho khóa sao lưu này...</p><p style="font-size: 14px; color: #6b7280;">Vui lòng đợi...</p></div>';
+                    this.demoData = this.generateDemoData();
+                    window.FirebaseStorage.setData(this.demoData);
+                    const saved = await window.FirebaseStorage.save({ data: this.demoData });
+                    if (saved) {
+                        this._ready = true;
+                        this.clearOldDataIfNeeded();
+                        this.init();
+                    } else {
+                        window._lastFirebaseError = 'Không lưu được dữ liệu lên Firebase. Kiểm tra Quy tắc (Rules) cho phép .write: true.';
+                        if (content) {
+                            content.innerHTML = '<div class="fade-in" style="padding: 48px; max-width: 520px; margin: 0 auto;">' +
+                                '<h2>⚠️ Không lưu được dữ liệu</h2>' +
+                                '<p style="margin: 16px 0; color: #6b7280;">' + window._lastFirebaseError + '</p>' +
+                                '<p style="margin: 8px 0; font-size: 13px;">💡 Vào Firebase Console → Realtime Database → Rules, đảm bảo có <code>.write: true</code></p>' +
+                                '<div style="display:grid;gap:12px;margin-top:20px;">' +
+                                '<input id="fb-url" placeholder="URL Firebase" style="padding:12px;border:2px solid #e5e7eb;border-radius:8px;">' +
+                                '<input id="fb-key" placeholder="Khóa sao lưu" style="padding:12px;border:2px solid #e5e7eb;border-radius:8px;">' +
+                                '<button onclick="app.applyFirebaseConfigFromForm()" style="padding:12px 24px;background:var(--primary-blue);color:white;border:none;border-radius:8px;cursor:pointer;font-weight:600;">Thử lại</button>' +
+                                '</div></div>';
+                            const cfg = window.FirebaseStorage.getConfig();
+                            if (cfg) {
+                                const u = document.getElementById('fb-url');
+                                const k = document.getElementById('fb-key');
+                                if (u) u.value = cfg.url || '';
+                                if (k) k.value = cfg.key || '';
+                            }
+                        }
+                        window.app = this;
+                    }
+                    return;
                 } else {
                     const errMsg = window._lastFirebaseError || 'Không tải được dữ liệu.';
                     if (content) {
@@ -854,7 +888,7 @@
                 const repairs = data.repairs || [];
                 const todayRepairs = repairs.filter(r => r && r.date === todayStr);
                 const yesterdayRepairs = repairs.filter(r => r && r.date === yesterdayStr);
-                const calcRepairRevenue = (r) => (Number(r.repairCost) || 0) + (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                const calcRepairRevenue = (r) => (r.status || '') === 'Đã trả' ? (Number(r.repairCost) || 0) : 0;
                 const todayOrderRev = todayOrders.reduce((s, o) => s + (Number(o.total) || 0), 0);
                 const yesterdayOrderRev = yesterdayOrders.reduce((s, o) => s + (Number(o.total) || 0), 0);
                 const todayRepairRev = todayRepairs.reduce((s, r) => s + calcRepairRevenue(r), 0);
@@ -3243,21 +3277,19 @@
             }
 
             calcRepairProfit(repair) {
-                let profit = 0;
+                // Chỉ tính khi đã trả cho khách (đã thu tiền)
+                if ((repair.status || '') !== 'Đã trả') return 0;
                 const repairCost = Number(repair.repairCost) || 0;
                 const partsManualCost = Number(repair.partsManualCost) || 0;
-                profit += repairCost;
-                profit += partsManualCost;
+                // Lợi nhuận = Báo giá - Giá linh kiện (partsManualCost + chi phí linh kiện từ sản phẩm)
+                let partsCost = partsManualCost;
                 const products = this.demoData.products || [];
                 (repair.parts || []).forEach(p => {
                     const prod = products.find(x => x.id === p.productId);
                     const importPrice = prod && (prod.importPrice != null && prod.importPrice !== '') ? Number(prod.importPrice) : 0;
-                    const qty = p.quantity || 0;
-                    const revenue = (p.price || 0) * qty;
-                    const cost = qty * importPrice;
-                    profit += revenue - cost;
+                    partsCost += (p.quantity || 0) * importPrice;
                 });
-                return profit;
+                return Math.max(0, repairCost - partsCost);
             }
 
             getReportsContent() {
@@ -3280,10 +3312,8 @@
                     return repDate >= startDate && repDate <= endDate;
                 });
                 const repairRevenue = filteredRepairs.reduce((s, r) => {
-                    const repairCost = Number(r.repairCost) || 0;
-                    const totalParts = (r.parts || []).reduce((sum, p) => sum + (p.quantity || 0) * (p.price || 0), 0);
-                    const partsManualCost = Number(r.partsManualCost) || 0;
-                    return s + repairCost + totalParts + partsManualCost;
+                    if ((r.status || '') !== 'Đã trả') return s;
+                    return s + (Number(r.repairCost) || 0);
                 }, 0);
                 const totalRevenue = filteredOrders.reduce((s, o) => s + (o.total || 0), 0) + repairRevenue;
                 const orderProfit = filteredOrders.reduce((s, o) => s + this.calcOrderProfit(o), 0);
@@ -3322,8 +3352,8 @@
                                         <label style="display: block; margin-bottom: 6px; font-weight: 600; color: var(--text-secondary);">Lựa chọn nhanh:</label>
                                         <select id="filter-quick-select" onchange="app.applyQuickFilter(this.value)"
                                                 style="width: 100%; padding: 8px 12px; border: 2px solid #e5e7eb; border-radius: 6px; font-size: 14px;">
-                                            <option value="">Tùy chỉnh</option>
-                                            <option value="today">Hôm nay</option>
+                                            <option value="" ${!(fromDate === toDate && fromDate === this.getVietnamTime().toISOString().split('T')[0]) ? 'selected' : ''}>Tùy chỉnh</option>
+                                            <option value="today" ${fromDate === toDate && fromDate === this.getVietnamTime().toISOString().split('T')[0] ? 'selected' : ''}>Hôm nay</option>
                                             <option value="yesterday">Hôm qua</option>
                                             <option value="this-week">Tuần này</option>
                                             <option value="last-week">Tuần trước</option>
@@ -3391,7 +3421,7 @@
                                     </thead>
                                     <tbody id="reports-repairs-list">
                                         ${filteredRepairs.map(r => {
-                                            const rev = (Number(r.repairCost) || 0) + (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                                            const rev = (r.status || '') === 'Đã trả' ? (Number(r.repairCost) || 0) : 0;
                                             return `<tr style="border-bottom: 1px solid #e5e7eb;">
                                                 <td style="padding: 12px;">${(r.id || '').replace(/</g, '&lt;')}</td>
                                                 <td style="padding: 12px;">${(r.customerName || '-').replace(/</g, '&lt;')}</td>
@@ -10014,7 +10044,8 @@
                 // Tính toán dữ liệu phân tích
                 const orderRevenue = this.demoData.orders.reduce((sum, order) => sum + (order.total || 0), 0);
                 const repairRevenue = (this.demoData.repairs || []).reduce((s, r) => {
-                    return s + (Number(r.repairCost) || 0) + (r.parts || []).reduce((sp, p) => sp + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                    if ((r.status || '') !== 'Đã trả') return s;
+                    return s + (Number(r.repairCost) || 0);
                 }, 0);
                 const totalRevenue = orderRevenue + repairRevenue;
                 const totalTransactions = this.demoData.orders.length + (this.demoData.repairs || []).length;
@@ -11664,10 +11695,8 @@
             }
 
             getDefaultFromDate() {
-                // Mặc định là đầu tháng này (giờ Việt Nam)
-                const vietnamTime = this.getVietnamTime();
-                vietnamTime.setDate(1);
-                return vietnamTime.toISOString().split('T')[0];
+                // Mặc định là hôm nay (giờ Việt Nam)
+                return this.getVietnamTime().toISOString().split('T')[0];
             }
 
             getDefaultToDate() {
@@ -11696,7 +11725,7 @@
                 }
             }
 
-            // Áp dụng lựa chọn nhanh
+            // Áp dụng lựa chọn nhanh - chọn xong áp dụng ngay không cần nhấn nút
             applyQuickFilter(value) {
                 const fromDateInput = document.getElementById('filter-from-date');
                 const toDateInput = document.getElementById('filter-to-date');
@@ -11705,7 +11734,7 @@
 
                 switch(value) {
                     case 'today':
-                        fromDate = toDate = this.getVietnamTime();
+                        fromDate = toDate = new Date(today.getTime());
                         break;
                     case 'yesterday':
                         fromDate = toDate = new Date(today.getTime() - 24 * 60 * 60 * 1000);
@@ -11753,8 +11782,9 @@
                 }
 
                 if (fromDate && toDate) {
-                    fromDateInput.value = fromDate.toISOString().split('T')[0];
-                    toDateInput.value = toDate.toISOString().split('T')[0];
+                    fromDateInput.value = fromDate.toISOString ? fromDate.toISOString().split('T')[0] : fromDate;
+                    toDateInput.value = toDate.toISOString ? toDate.toISOString().split('T')[0] : toDate;
+                    this.applyDateFilter();
                 }
             }
 
@@ -11817,7 +11847,8 @@
                     return repDate >= startDate && repDate <= endDate;
                 });
                 const repairRevenue = filteredRepairs.reduce((s, r) => {
-                    return s + (Number(r.repairCost) || 0) + (r.parts || []).reduce((sp, p) => sp + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                    if ((r.status || '') !== 'Đã trả') return s;
+                    return s + (Number(r.repairCost) || 0);
                 }, 0);
 
                 // Tính toán lại các số liệu thống kê (Doanh thu = đơn hàng + sửa chữa)
@@ -11855,7 +11886,7 @@
                 const header = section ? section.querySelector('h3') : null;
                 if (header) header.innerHTML = `<span>🔧</span> Phiếu sửa chữa trong khoảng chọn (${filteredRepairs.length})`;
                 container.innerHTML = filteredRepairs.map(r => {
-                    const rev = (Number(r.repairCost) || 0) + (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                    const rev = (r.status || '') === 'Đã trả' ? (Number(r.repairCost) || 0) : 0;
                     return `<tr style="border-bottom: 1px solid #e5e7eb;">
                         <td style="padding: 12px;">${(r.id || '').replace(/</g, '&lt;')}</td>
                         <td style="padding: 12px;">${(r.customerName || '-').replace(/</g, '&lt;')}</td>
@@ -12031,7 +12062,7 @@
                     return repDate >= startDate && repDate <= endDate;
                 });
 
-                const calcRepairTotal = (r) => (Number(r.repairCost) || 0) + (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                const calcRepairTotal = (r) => (r.status || '') === 'Đã trả' ? (Number(r.repairCost) || 0) : 0;
 
                 // Sắp xếp và tạo dữ liệu báo cáo
                 const sortedFilteredOrders = this.sortOrdersByDate(filteredOrders);
@@ -12365,7 +12396,8 @@
                     return repDate >= startDate && repDate <= endDate;
                 });
                 const repairRevenue = filteredRepairs.reduce((s, r) => {
-                    return s + (Number(r.repairCost) || 0) + (r.parts || []).reduce((sp, p) => sp + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                    if ((r.status || '') !== 'Đã trả') return s;
+                    return s + (Number(r.repairCost) || 0);
                 }, 0);
 
                 // Tính toán các chỉ số tài chính
