@@ -2771,7 +2771,7 @@
                 const totalParts = (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0);
                 const partsManualCost = Number(r.partsManualCost) || 0;
                 const repairCost = Number(r.repairCost) || 0;
-                const totalAll = repairCost + totalParts + partsManualCost;
+                const totalCustomer = repairCost;
 
                 const detailHTML = `
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this && window._modalMousedownTarget===this) closeModal(this)">
@@ -2792,10 +2792,9 @@
                                     ${partsList}
                                     <div style="padding-top: 8px; font-weight: 600;">
                                         ${totalParts > 0 ? `Linh kiện (từ sản phẩm): ${totalParts.toLocaleString('vi-VN')} đ` : ''}
-                                        ${(repairCost > 0 || totalParts > 0 || partsManualCost > 0) ? '<br>' : ''}
-                                        ${repairCost > 0 ? `Báo giá: ${repairCost.toLocaleString('vi-VN')} đ` : ''}
-                                        ${partsManualCost > 0 ? `${repairCost > 0 ? ' + ' : ''}Giá linh kiện: ${partsManualCost.toLocaleString('vi-VN')} đ` : ''}
-                                        ${totalAll > 0 ? `<br><strong>Tổng cộng: ${totalAll.toLocaleString('vi-VN')} đ</strong>` : ''}
+                                        ${repairCost > 0 ? `<br>Báo giá (tổng khách trả): ${repairCost.toLocaleString('vi-VN')} đ` : ''}
+                                        ${partsManualCost > 0 ? `<br>Giá linh kiện (chi phí - để tính lợi nhuận): ${partsManualCost.toLocaleString('vi-VN')} đ` : ''}
+                                        ${totalCustomer > 0 ? `<br><strong>Tổng cộng: ${totalCustomer.toLocaleString('vi-VN')} đ</strong>` : ''}
                                     </div>
                                 </div>
                             </div>
