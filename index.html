@@ -326,6 +326,17 @@
                     this.demoData.repairs = [];
                     needsSave = true;
                 }
+                // Migrate repairs: thêm amountPaid, paymentStatus cho phiếu cũ
+                if (this.demoData.repairs) {
+                    this.demoData.repairs.forEach(rep => {
+                        if (rep.amountPaid == null && rep.paymentStatus == null) {
+                            const cost = Number(rep.repairCost) || 0;
+                            rep.amountPaid = (rep.status || '') === 'Đã trả' ? cost : 0;
+                            rep.paymentStatus = rep.amountPaid >= cost ? 'Đã thanh toán' : 'Công nợ';
+                            needsSave = true;
+                        }
+                    });
+                }
                 // Xóa hết khách lẻ (KH_LE, KL_*) - không lưu trong danh sách, chỉ ghi "Khách lẻ" trong hóa đơn khi không chọn khách
                 if (this.demoData.customers) {
                     const before = this.demoData.customers.length;
@@ -2365,28 +2376,39 @@
             getRepairsContent() {
                 const repairs = this.demoData.repairs || [];
                 const repairsTable = repairs.length === 0 ? `
-                    <tr><td colspan="8" style="padding: 24px; text-align: center; color: #6b7280;">Chưa có phiếu sửa chữa nào. Nhấn "Thêm phiếu sửa chữa" để tạo mới.</td></tr>
-                ` : repairs.map((r, index) => `
-                    <tr data-repair-index="${index}">
-                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${r.id || 'SC' + String(index + 1).padStart(4, '0')}</td>
-                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${r.customerName || '-'}</td>
-                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${r.phone || '-'}</td>
-                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${(r.repairDescription || '').substring(0, 40)}${(r.repairDescription || '').length > 40 ? '...' : ''}</td>
-                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${r.warrantyPeriod || '-'}</td>
-                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${r.date || '-'}</td>
-                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">
-                            <span style="padding: 4px 8px; border-radius: 6px; font-size: 12px; background: ${r.status === 'Hoàn thành' ? '#dcfce7' : r.status === 'Đã trả' ? '#e0e7ff' : '#fef3c7'}; color: ${r.status === 'Hoàn thành' ? '#166534' : r.status === 'Đã trả' ? '#3730a3' : '#b45309'};">
+                    <tr><td colspan="9" style="padding: 24px; text-align: center; color: #6b7280;">Chưa có phiếu sửa chữa nào. Nhấn "Thêm phiếu sửa chữa" để tạo mới.</td></tr>
+                ` : repairs.map((r, index) => {
+                    const payStatus = (r.status || '') === 'Đã trả' ? (r.paymentStatus || ((r.amountPaid >= (Number(r.repairCost) || 0)) ? 'Đã thanh toán' : 'Công nợ')) : '-';
+                    const desc = (r.repairDescription || '').replace(/</g, '&lt;');
+                    const descShort = desc.length > 35 ? desc.substring(0, 35) + '…' : desc || '-';
+                    return `
+                    <tr data-repair-index="${index}" style="vertical-align: middle;">
+                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; white-space: nowrap;">${r.id || 'SC' + String(index + 1).padStart(4, '0')}</td>
+                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${(r.customerName || '-').replace(/"/g, '&quot;')}">${r.customerName || '-'}</td>
+                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; white-space: nowrap;">${r.phone || '-'}</td>
+                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${desc.replace(/"/g, '&quot;')}">${descShort}</td>
+                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; white-space: nowrap;">${r.warrantyPeriod || '-'}</td>
+                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; font-size: 13px; white-space: nowrap;">${r.date || '-'}</td>
+                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">
+                            <span style="padding: 3px 6px; border-radius: 6px; font-size: 11px; white-space: nowrap; display: inline-block; background: ${payStatus === 'Đã thanh toán' ? '#dcfce7' : payStatus === 'Công nợ' ? '#fef3c7' : '#f3f4f6'}; color: ${payStatus === 'Đã thanh toán' ? '#166534' : payStatus === 'Công nợ' ? '#b45309' : '#6b7280'};">
+                                ${payStatus}
+                            </span>
+                        </td>
+                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">
+                            <span style="padding: 3px 6px; border-radius: 6px; font-size: 11px; white-space: nowrap; display: inline-block; background: ${r.status === 'Hoàn thành' ? '#dcfce7' : r.status === 'Đã trả' ? '#e0e7ff' : '#fef3c7'}; color: ${r.status === 'Hoàn thành' ? '#166534' : r.status === 'Đã trả' ? '#3730a3' : '#b45309'};">
                                 ${r.status || 'Đang sửa'}
                             </span>
                         </td>
-                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">
-                            <button onclick="app.printRepair(${index})" style="background: var(--primary-green); color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; margin-right: 4px; font-weight: 600;" title="In phiếu sửa chữa">IN</button>
-                            <button onclick="app.viewRepairDetails(${index})" style="background: var(--primary-blue); color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; margin-right: 4px;">Chi tiết</button>
-                            <button onclick="app.editRepair(${index})" style="background: var(--primary-green); color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; margin-right: 4px;">Sửa</button>
-                            <button onclick="app.deleteRepair(${index})" style="background: #ef4444; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Xóa</button>
+                        <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; white-space: nowrap;">
+                            <div style="display: flex; flex-wrap: nowrap; gap: 4px; align-items: center;">
+                                <button onclick="app.printRepair(${index})" style="background: var(--primary-green); color: white; border: none; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 11px; white-space: nowrap;" title="In phiếu">IN</button>
+                                <button onclick="app.viewRepairDetails(${index})" style="background: var(--primary-blue); color: white; border: none; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; white-space: nowrap;">Chi tiết</button>
+                                <button onclick="app.editRepair(${index})" style="background: var(--primary-green); color: white; border: none; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; white-space: nowrap;">Sửa</button>
+                                <button onclick="app.deleteRepair(${index})" style="background: #ef4444; color: white; border: none; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 11px; white-space: nowrap;">Xóa</button>
+                            </div>
                         </td>
                     </tr>
-                `).join('');
+                `; }).join('');
 
                 return `
                     <div class="fade-in">
@@ -2410,17 +2432,29 @@
                                            oninput="app.searchRepairs(this.value)">
                                 </div>
                                 <div style="overflow-x: auto;">
-                                    <table id="repairs-table" style="width: 100%; border-collapse: collapse; background: white;">
+                                    <table id="repairs-table" style="width: 100%; min-width: 900px; border-collapse: collapse; background: white; table-layout: fixed;">
+                                        <colgroup>
+                                            <col style="width: 75px;">
+                                            <col style="width: 130px;">
+                                            <col style="width: 95px;">
+                                            <col style="width: 22%;">
+                                            <col style="width: 75px;">
+                                            <col style="width: 95px;">
+                                            <col style="width: 95px;">
+                                            <col style="width: 95px;">
+                                            <col style="width: 200px;">
+                                        </colgroup>
                                         <thead>
                                             <tr style="background: #f8fafc;">
-                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Mã phiếu</th>
-                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Khách hàng</th>
-                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">SĐT</th>
-                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Bản chất sửa chữa</th>
-                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Bảo hành</th>
-                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Ngày</th>
-                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Trạng thái</th>
-                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Thao tác</th>
+                                                <th style="padding: 10px 8px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; font-size: 13px;">Mã phiếu</th>
+                                                <th style="padding: 10px 8px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; font-size: 13px;">Khách hàng</th>
+                                                <th style="padding: 10px 8px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; font-size: 13px;">SĐT</th>
+                                                <th style="padding: 10px 8px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; font-size: 13px;">Bản chất sửa chữa</th>
+                                                <th style="padding: 10px 8px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; font-size: 13px;">Bảo hành</th>
+                                                <th style="padding: 10px 8px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; font-size: 13px;">Ngày</th>
+                                                <th style="padding: 10px 8px; text-align: center; border-bottom: 2px solid #e5e7eb; font-weight: 600; font-size: 13px;">Thanh toán</th>
+                                                <th style="padding: 10px 8px; text-align: center; border-bottom: 2px solid #e5e7eb; font-weight: 600; font-size: 13px;">Trạng thái</th>
+                                                <th style="padding: 10px 8px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; font-size: 13px;">Thao tác</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -2500,6 +2534,10 @@
                                 <div style="margin-top: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Giá linh kiện (VNĐ):</label>
                                     <input type="text" class="price-input" name="partsManualCost" value="0" placeholder="Linh kiện không có trong sản phẩm - để tính doanh thu" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
+                                </div>
+                                <div style="margin-top: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Khách đã thanh toán (VNĐ):</label>
+                                    <input type="text" class="price-input" name="amountPaid" value="0" placeholder="Số tiền khách đã trả - nếu < Báo giá sẽ là Công nợ" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
                                 </div>
                                 <div style="margin-top: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Linh kiện sửa chữa:</label>
@@ -2719,6 +2757,8 @@
 
                 const repairCost = this.parsePrice(formData.get('repairCost'));
                 const partsManualCost = this.parsePrice(formData.get('partsManualCost'));
+                const amountPaid = Math.max(0, this.parsePrice(formData.get('amountPaid')) || 0);
+                const paymentStatus = amountPaid >= repairCost ? 'Đã thanh toán' : 'Công nợ';
                 const productsData = this.demoData.products || [];
                 const neededByProduct = {};
                 parts.forEach(p => { if (p.productId) neededByProduct[p.productId] = (neededByProduct[p.productId] || 0) + (p.quantity || 0); });
@@ -2749,6 +2789,8 @@
                     password: formData.get('password') || '',
                     repairCost: repairCost,
                     partsManualCost: partsManualCost,
+                    amountPaid: amountPaid,
+                    paymentStatus: paymentStatus,
                     parts: parts,
                     warrantyPeriod: formData.get('warrantyPeriod') || '',
                     status: formData.get('status') || 'Đang sửa',
@@ -2766,6 +2808,13 @@
                 });
                 this.demoData.repairs = this.demoData.repairs || [];
                 this.demoData.repairs.unshift(newRepair);
+                if (newRepair.status === 'Đã trả' && newRepair.paymentStatus === 'Công nợ') {
+                    const repairDebt = Math.max(0, repairCost - amountPaid);
+                    if (repairDebt > 0 && customerId) {
+                        const cust = this.demoData.customers.find(c => c.id === customerId);
+                        if (cust) { cust.debt = (cust.debt || 0) + repairDebt; }
+                    }
+                }
                 this.saveToLocalStorage();
                 this.showNotification('Đã thêm phiếu sửa chữa ' + newRepair.id, 'success');
                 this.loadPage('repairs');
@@ -2815,6 +2864,7 @@
                             <div style="margin-bottom: 12px;"><strong>Thời gian bảo hành:</strong> ${r.warrantyPeriod || '-'}</div>
                             <div style="margin-bottom: 12px;"><strong>Ngày:</strong> ${r.date || '-'} ${r.time || ''}</div>
                             <div style="margin-bottom: 12px;"><strong>Trạng thái:</strong> ${r.status || '-'}</div>
+                            ${(r.status || '') === 'Đã trả' ? `<div style="margin-bottom: 12px;"><strong>Thanh toán:</strong> ${(r.paymentStatus || '-')} ${r.paymentStatus === 'Công nợ' && (Number(r.repairCost) || 0) - (Number(r.amountPaid) ?? 0) > 0 ? ' (Còn nợ: ' + ((Number(r.repairCost) || 0) - (Number(r.amountPaid) ?? 0)).toLocaleString('vi-VN') + ' đ)' : ''}</div>` : ''}
                             ${r.notes ? `<div style="margin-bottom: 12px;"><strong>Ghi chú:</strong> ${r.notes}</div>` : ''}
                             <div style="display: flex; gap: 12px; justify-content: center; margin-top: 24px;">
                                 <button onclick="closeModal(this.closest('div[style*=fixed]')); app.printRepair(${index});" style="padding: 12px 24px; background: var(--primary-green); color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">🖨️ In</button>
@@ -2929,6 +2979,16 @@
                                 <div style="margin-top: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Giá linh kiện (VNĐ):</label>
                                     <input type="text" class="price-input" name="partsManualCost" value="${this.formatPrice(Number(r.partsManualCost) || 0)}" placeholder="Linh kiện không có trong sản phẩm - để tính doanh thu" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
+                                </div>
+                                <div style="margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Khách cần trả (VNĐ):</label>
+                                        <div style="padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; background: #f8fafc; font-weight: 600;">${(Number(r.repairCost) || 0).toLocaleString('vi-VN')}</div>
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Khách đã thanh toán (VNĐ):</label>
+                                        <input type="text" class="price-input" name="amountPaid" value="${this.formatPrice(Number(r.amountPaid) ?? (r.paymentStatus === 'Công nợ' ? 0 : Number(r.repairCost) || 0))}" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
+                                    </div>
                                 </div>
                                 <div style="margin-top: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Linh kiện sửa chữa:</label>
@@ -3115,6 +3175,22 @@
                 r.password = formData.get('password') || '';
                 r.repairCost = repairCost;
                 r.partsManualCost = this.parsePrice(formData.get('partsManualCost'));
+                const amountPaid = Math.max(0, this.parsePrice(formData.get('amountPaid')) || 0);
+                const paymentStatus = amountPaid >= repairCost ? 'Đã thanh toán' : 'Công nợ';
+                const oldRepairDebt = (r.status === 'Đã trả' && r.paymentStatus === 'Công nợ') ? Math.max(0, (Number(r.repairCost) || 0) - (Number(r.amountPaid) ?? 0)) : 0;
+                const newRepairDebt = (formData.get('status') === 'Đã trả' && paymentStatus === 'Công nợ') ? Math.max(0, repairCost - amountPaid) : 0;
+                const oldCustId = r.customerId;
+                const newCustId = customerId || null;
+                if (oldRepairDebt > 0 && oldCustId) {
+                    const oldCust = this.demoData.customers.find(c => c.id === oldCustId);
+                    if (oldCust) oldCust.debt = Math.max(0, (oldCust.debt || 0) - oldRepairDebt);
+                }
+                if (newRepairDebt > 0 && newCustId) {
+                    const newCust = this.demoData.customers.find(c => c.id === newCustId);
+                    if (newCust) newCust.debt = (newCust.debt || 0) + newRepairDebt;
+                }
+                r.amountPaid = amountPaid;
+                r.paymentStatus = paymentStatus;
                 r.parts = parts;
                 r.warrantyPeriod = formData.get('warrantyPeriod') || '';
                 r.status = formData.get('status') || 'Đang sửa';
@@ -3129,6 +3205,13 @@
                 const r = this.demoData.repairs[index];
                 if (!r) return;
                 if (confirm('Bạn có chắc muốn xóa phiếu sửa chữa ' + (r.id || 'này') + '?')) {
+                    if (r.status === 'Đã trả' && r.paymentStatus === 'Công nợ' && r.customerId) {
+                        const repairDebt = Math.max(0, (Number(r.repairCost) || 0) - (Number(r.amountPaid) ?? 0));
+                        if (repairDebt > 0) {
+                            const cust = this.demoData.customers.find(c => c.id === r.customerId);
+                            if (cust) cust.debt = Math.max(0, (cust.debt || 0) - repairDebt);
+                        }
+                    }
                     (r.parts || []).forEach(p => {
                         if (!p.productId) return;
                         const idx = this.demoData.products.findIndex(x => x.id === p.productId);
@@ -3429,17 +3512,20 @@
                                             <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Khách hàng</th>
                                             <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Ngày</th>
                                             <th style="padding: 12px; text-align: right; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Doanh thu</th>
+                                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Thanh toán</th>
                                             <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Trạng thái</th>
                                         </tr>
                                     </thead>
                                     <tbody id="reports-repairs-list">
                                         ${filteredRepairs.map(r => {
                                             const rev = (r.status || '') === 'Đã trả' ? (Number(r.repairCost) || 0) : 0;
+                                            const payStatus = (r.status || '') === 'Đã trả' ? (r.paymentStatus || ((r.amountPaid >= (Number(r.repairCost) || 0)) ? 'Đã thanh toán' : 'Công nợ')) : '-';
                                             return `<tr style="border-bottom: 1px solid #e5e7eb;">
                                                 <td style="padding: 12px;">${(r.id || '').replace(/</g, '&lt;')}</td>
                                                 <td style="padding: 12px;">${(r.customerName || '-').replace(/</g, '&lt;')}</td>
                                                 <td style="padding: 12px;">${(r.date || '-')} ${(r.time || '')}</td>
                                                 <td style="padding: 12px; text-align: right; font-weight: 600;">${rev.toLocaleString('vi-VN')} đ</td>
+                                                <td style="padding: 12px;">${payStatus.replace(/</g, '&lt;')}</td>
                                                 <td style="padding: 12px;">${(r.status || '-').replace(/</g, '&lt;')}</td>
                                             </tr>`;
                                         }).join('')}
@@ -3461,6 +3547,12 @@
                                     <div class="action-icon">💰</div>
                                     <div class="action-title">Báo cáo bán hàng</div>
                                     <div class="action-desc">Top sản phẩm bán chạy</div>
+                                </div>
+                                
+                                <div class="action-button" onclick="app.exportRepairsReport()">
+                                    <div class="action-icon">🔧</div>
+                                    <div class="action-title">Báo cáo sửa chữa</div>
+                                    <div class="action-desc">Phiếu sửa chữa theo khoảng thời gian</div>
                                 </div>
                                 
                                 <div class="action-button" onclick="app.exportInventoryReport()">
@@ -8562,6 +8654,10 @@
             exportSalesReport(mode = null) {
                 this.showSalesExportWithFilter();
             }
+
+            exportRepairsReport(mode = null) {
+                this.showRepairsExportWithFilter();
+            }
             
             exportPurchaseReport(mode = null) {
                 if (!mode) {
@@ -11900,11 +11996,13 @@
                 if (header) header.innerHTML = `<span>🔧</span> Phiếu sửa chữa trong khoảng chọn (${filteredRepairs.length})`;
                 container.innerHTML = filteredRepairs.map(r => {
                     const rev = (r.status || '') === 'Đã trả' ? (Number(r.repairCost) || 0) : 0;
+                    const payStatus = (r.status || '') === 'Đã trả' ? (r.paymentStatus || ((r.amountPaid >= (Number(r.repairCost) || 0)) ? 'Đã thanh toán' : 'Công nợ')) : '-';
                     return `<tr style="border-bottom: 1px solid #e5e7eb;">
                         <td style="padding: 12px;">${(r.id || '').replace(/</g, '&lt;')}</td>
                         <td style="padding: 12px;">${(r.customerName || '-').replace(/</g, '&lt;')}</td>
                         <td style="padding: 12px;">${(r.date || '-')} ${(r.time || '')}</td>
                         <td style="padding: 12px; text-align: right; font-weight: 600;">${rev.toLocaleString('vi-VN')} đ</td>
+                        <td style="padding: 12px;">${payStatus.replace(/</g, '&lt;')}</td>
                         <td style="padding: 12px;">${(r.status || '-').replace(/</g, '&lt;')}</td>
                     </tr>`;
                 }).join('');
@@ -12044,6 +12142,136 @@
                 document.getElementById('exportSalesToDate').value = today.toISOString().split('T')[0];
             }
 
+            // Hiển thị popup export báo cáo sửa chữa với bộ lọc
+            showRepairsExportWithFilter() {
+                const exportHTML = `
+                    <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this && window._modalMousedownTarget===this) closeModal(this)">
+                        <div style="background: white; padding: 25px; border-radius: 12px; width: 500px; max-height: 80vh; overflow-y: auto;" onclick="event.stopPropagation()">
+                            <div style="text-align: center; margin-bottom: 20px;">
+                                <h3 style="margin: 0; font-size: 20px; color: #1f2937;">Xuất báo cáo sửa chữa</h3>
+                                <p style="margin: 10px 0; color: #6b7280;">Bạn muốn xem dữ liệu hay tải về file?</p>
+                            </div>
+
+                            <!-- Bộ lọc thời gian -->
+                            <div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                                <h4 style="margin: 0 0 15px 0; color: #374151; font-size: 14px;">📅 Chọn khoảng thời gian:</h4>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 10px;">
+                                    <div>
+                                        <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #6b7280;">Từ ngày:</label>
+                                        <input type="date" id="exportRepairsFromDate" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                                    </div>
+                                    <div>
+                                        <label style="display: block; margin-bottom: 5px; font-size: 12px; color: #6b7280;">Đến ngày:</label>
+                                        <input type="date" id="exportRepairsToDate" style="width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 14px;">
+                                    </div>
+                                </div>
+                                <div style="font-size: 12px; color: #6b7280; font-style: italic;">
+                                    * Báo cáo sẽ dựa trên khoảng thời gian đã chọn
+                                </div>
+                            </div>
+
+                            <!-- Nút hành động -->
+                            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                                <button onclick="app.processRepairsExport('view')"
+                                        style="background: #3b82f6; color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                    👁️ Xem dữ liệu
+                                </button>
+                                <button onclick="app.processRepairsExport('download')"
+                                        style="background: #059669; color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-size: 16px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                                    📥 Tải về
+                                </button>
+                            </div>
+
+                        </div>
+                    </div>
+                `;
+
+                document.body.insertAdjacentHTML('beforeend', exportHTML);
+
+                const today = this.getVietnamTime();
+                document.getElementById('exportRepairsFromDate').value = today.toISOString().split('T')[0];
+                document.getElementById('exportRepairsToDate').value = today.toISOString().split('T')[0];
+            }
+
+            // Xử lý export báo cáo sửa chữa
+            processRepairsExport(mode) {
+                const fromDate = document.getElementById('exportRepairsFromDate').value;
+                const toDate = document.getElementById('exportRepairsToDate').value;
+
+                if (!fromDate || !toDate) {
+                    this.showNotification('Vui lòng chọn khoảng thời gian', 'error');
+                    return;
+                }
+
+                if (new Date(fromDate) > new Date(toDate)) {
+                    this.showNotification('Ngày bắt đầu không được lớn hơn ngày kết thúc', 'error');
+                    return;
+                }
+
+                const startDate = new Date(fromDate);
+                const endDate = new Date(toDate);
+                endDate.setHours(23, 59, 59, 999);
+
+                const filteredRepairs = (this.demoData.repairs || []).filter(rep => {
+                    const repDate = rep.date ? new Date(rep.date) : null;
+                    if (!repDate || isNaN(repDate.getTime())) return false;
+                    return repDate >= startDate && repDate <= endDate;
+                });
+
+                const repairsData = filteredRepairs.map(r => ({
+                    id: r.id || 'SC-',
+                    customer: r.customerName || 'N/A',
+                    device: r.deviceName || '-',
+                    description: (r.repairDescription || '-').substring(0, 50),
+                    repairCost: Number(r.repairCost) || 0,
+                    partsManualCost: Number(r.partsManualCost) || 0,
+                    status: r.status || '-',
+                    date: r.date || '-',
+                    revenue: (r.status || '') === 'Đã trả' ? (Number(r.repairCost) || 0) : 0,
+                    profit: this.calcRepairProfit(r)
+                }));
+
+                const exportModal = document.querySelector('div[style*="position: fixed"]');
+                if (exportModal) exportModal.remove();
+
+                if (repairsData.length === 0) {
+                    this.showNotification('Không có phiếu sửa chữa nào trong khoảng thời gian này', 'info');
+                    return;
+                }
+
+                if (mode === 'view') {
+                    const columns = [
+                        { header: 'Mã phiếu', getValue: r => r.id },
+                        { header: 'Khách hàng', getValue: r => r.customer },
+                        { header: 'Thiết bị', getValue: r => r.device },
+                        { header: 'Mô tả lỗi', getValue: r => r.description },
+                        { header: 'Báo giá (VNĐ)', getValue: r => r.repairCost.toLocaleString('vi-VN') },
+                        { header: 'Giá linh kiện (VNĐ)', getValue: r => r.partsManualCost.toLocaleString('vi-VN') },
+                        { header: 'Trạng thái', getValue: r => r.status },
+                        { header: 'Ngày', getValue: r => r.date },
+                        { header: 'Doanh thu (VNĐ)', getValue: r => r.revenue.toLocaleString('vi-VN') },
+                        { header: 'Lợi nhuận (VNĐ)', getValue: r => r.profit.toLocaleString('vi-VN') }
+                    ];
+                    const title = `Báo cáo sửa chữa (${this.formatDateForDisplay(fromDate)} - ${this.formatDateForDisplay(toDate)})`;
+                    this.showDataViewer(title, repairsData, columns);
+                } else if (mode === 'download') {
+                    const csvContent = "data:text/csv;charset=utf-8,\uFEFF" +
+                        `Báo cáo sửa chữa (${this.formatDateForDisplay(fromDate)} - ${this.formatDateForDisplay(toDate)})\n` +
+                        "Mã phiếu,Khách hàng,Thiết bị,Mô tả lỗi,Báo giá,Giá linh kiện,Trạng thái,Ngày,Doanh thu,Lợi nhuận\n" +
+                        repairsData.map(r =>
+                            `${r.id},"${(r.customer || '').replace(/"/g, '""')}","${(r.device || '').replace(/"/g, '""')}","${(r.description || '').replace(/"/g, '""')}",${r.repairCost},${r.partsManualCost},"${r.status}","${r.date}",${r.revenue},${r.profit}`
+                        ).join('\n');
+                    const encodedUri = encodeURI(csvContent);
+                    const link = document.createElement("a");
+                    link.setAttribute("href", encodedUri);
+                    link.setAttribute("download", `bao_cao_sua_chua_${fromDate}_${toDate}.csv`);
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    this.showNotification(`Đã tải xuống báo cáo sửa chữa (${repairsData.length} phiếu)`, 'success');
+                }
+            }
+
             // Xử lý export báo cáo doanh thu
             processSalesExport(mode) {
                 const fromDate = document.getElementById('exportSalesFromDate').value;
@@ -12100,7 +12328,7 @@
                     date: r.date,
                     items: 'Sửa chữa',
                     total: calcRepairTotal(r),
-                    paymentStatus: '-',
+                    paymentStatus: (r.status || '') === 'Đã trả' ? (r.paymentStatus || (r.amountPaid >= (Number(r.repairCost) || 0) ? 'Đã thanh toán' : 'Công nợ')) : '-',
                     status: r.status || '-'
                 }));
 
