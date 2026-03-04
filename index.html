@@ -276,6 +276,8 @@
                 if (!this.demoData.customers || !this.demoData.products) {
                     this.demoData = this.generateDemoData();
                     window.FirebaseStorage.setData(this.demoData);
+                } else {
+                    this.migrateProductData();
                 }
             }
 
@@ -298,20 +300,34 @@
                 }
                 // Bỏ auto-thêm "Linh kiện sửa chữa" để tránh trùng lặp khi user đã tạo sẵn
 
-                // Xóa danh mục trùng tên (chỉ giữ một, ưu tiên ID cũ hơn)
-                if (this.demoData.categories && this.demoData.categories.length > 1) {
-                    const normalize = (s) => (s || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
-                    const seen = new Map(); // key: "parentId|normalizedName"
-                    const before = this.demoData.categories.length;
-                    this.demoData.categories = this.demoData.categories.filter(cat => {
-                        const p = cat.parent || '';
+                // Xóa danh mục trùng tên (chỉ giữ một theo parent+name, ưu tiên ID cũ hơn)
+                if (this.demoData.categories && this.demoData.categories.length > 0) {
+                    const normalize = (s) => {
+                        let t = (s || '').toString().trim().toLowerCase().replace(/\s+/g, ' ');
+                        return t.normalize ? t.normalize('NFC') : t;
+                    };
+                    const keptByKey = new Map();
+                    const removedToKept = new Map();
+                    const filtered = [];
+                    for (const cat of this.demoData.categories) {
+                        const p = String(cat.parent ?? '').trim();
                         const n = normalize(cat.name || '');
                         const key = p + '|' + n;
-                        if (seen.has(key)) return false;
-                        seen.set(key, true);
-                        return true;
+                        if (keptByKey.has(key)) {
+                            removedToKept.set(cat.id, keptByKey.get(key));
+                            needsSave = true;
+                        } else {
+                            keptByKey.set(key, cat.id);
+                            filtered.push(cat);
+                        }
+                    }
+                    this.demoData.categories = filtered;
+                    filtered.forEach(cat => {
+                        if (removedToKept.has(cat.parent)) {
+                            cat.parent = removedToKept.get(cat.parent);
+                            needsSave = true;
+                        }
                     });
-                    if (this.demoData.categories.length !== before) needsSave = true;
                 }
 
                 // Sửa trùng ID sản phẩm (khi nhiều SP cùng ID, find() trả về SP đầu tiên → Sửa sai sản phẩm)
@@ -715,6 +731,12 @@
                         dd.style.display = 'none';
                     }
                 });
+                // Đóng dropdown tìm sản phẩm (sửa chữa, đơn hàng...) khi click ra ngoài - dùng mousedown vì click có thể bị stopPropagation trong modal
+                document.addEventListener('mousedown', (e) => {
+                    if (!e.target.closest('.custom-dropdown') && window.app && typeof window.app.closeAllDropdowns === 'function') {
+                        window.app.closeAllDropdowns();
+                    }
+                });
                 document.addEventListener('keydown', (e) => {
                     if (this.currentPage !== 'sales') return;
                     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) return;
@@ -829,8 +851,16 @@
                 const yesterdayStr = yesterday.toISOString().split('T')[0];
                 const todayOrders = orders.filter(o => o && o.date === todayStr);
                 const yesterdayOrders = orders.filter(o => o && o.date === yesterdayStr);
-                const todayRevenue = todayOrders.reduce((s, o) => s + (Number(o.total) || 0), 0);
-                const yesterdayRevenue = yesterdayOrders.reduce((s, o) => s + (Number(o.total) || 0), 0);
+                const repairs = data.repairs || [];
+                const todayRepairs = repairs.filter(r => r && r.date === todayStr);
+                const yesterdayRepairs = repairs.filter(r => r && r.date === yesterdayStr);
+                const calcRepairRevenue = (r) => (Number(r.repairCost) || 0) + (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                const todayOrderRev = todayOrders.reduce((s, o) => s + (Number(o.total) || 0), 0);
+                const yesterdayOrderRev = yesterdayOrders.reduce((s, o) => s + (Number(o.total) || 0), 0);
+                const todayRepairRev = todayRepairs.reduce((s, r) => s + calcRepairRevenue(r), 0);
+                const yesterdayRepairRev = yesterdayRepairs.reduce((s, r) => s + calcRepairRevenue(r), 0);
+                const todayRevenue = todayOrderRev + todayRepairRev;
+                const yesterdayRevenue = yesterdayOrderRev + yesterdayRepairRev;
                 const revenueChange = yesterdayRevenue > 0 ? ((todayRevenue - yesterdayRevenue) / yesterdayRevenue * 100).toFixed(1) : (todayOrders.length > 0 ? '100' : '0');
                 const orderChange = yesterdayOrders.length > 0 ? ((todayOrders.length - yesterdayOrders.length) / yesterdayOrders.length * 100).toFixed(1) : (todayOrders.length > 0 ? '100' : '0');
                 return `
@@ -1931,8 +1961,13 @@
                 const amountPaid = Math.min(total, Math.max(0, this.parsePrice(document.getElementById('pos-amount-paid')?.value) || total));
                 const orderDebt = Math.max(0, total - amountPaid);
                 const isPaidFull = orderDebt === 0;
+                const orders = this.demoData.orders || [];
+                const maxNum = orders.reduce((m, o) => {
+                    const n = parseInt((o.id || '').replace(/\D/g, ''), 10);
+                    return isNaN(n) ? m : Math.max(m, n);
+                }, 0);
                 const newOrder = {
-                    id: 'DH' + String((this.demoData.orders || []).length + 1).padStart(4, '0'),
+                    id: 'DH' + String(maxNum + 1).padStart(4, '0'),
                     customerId: customer.id,
                     customerName: customer.name,
                     phone: customer.phone || '',
@@ -1957,7 +1992,15 @@
                 }
                 for (const pr of products) {
                     const prod = (this.demoData.products || []).find(x => x.id === pr.productId);
-                    if (prod) prod.stock = Math.max(0, (prod.stock || 0) - pr.quantity);
+                    if (!prod) continue;
+                    const qty = pr.quantity || 1;
+                    if (prod.hasImei && prod.imeis && Array.isArray(prod.imeis)) {
+                        const toSell = Math.min(qty, prod.imeis.length);
+                        const soldImeis = prod.imeis.splice(0, toSell);
+                        pr.soldImeis = soldImeis;
+                    } else {
+                        prod.stock = Math.max(0, (prod.stock || 0) - qty);
+                    }
                 }
                 this.posCart.items = [];
                 this.posCart.discount = 0;
@@ -2149,6 +2192,7 @@
                     <tr data-order-index="${originalIndex}">
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${order.id}</td>
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${order.customerName}</td>
+                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; max-width: 260px; font-size: 13px;" title="${((order.products || []).map(p => (p.name || p.productName || '') + ' x' + (p.quantity || 1)).join(', ')).replace(/"/g, '&quot;')}">${((order.products || []).map(p => (p.name || p.productName || '-') + ' x' + (p.quantity || 1)).join(', ') || '-')}</td>
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${order.date} ${order.time}</td>
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${order.total.toLocaleString('vi-VN')} VNĐ</td>
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">${order.paymentMethod}</td>
@@ -2162,9 +2206,11 @@
                             </button>
                         </td>
                         <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">
-                            <button onclick="app.showPrintOptionsPopup(${originalIndex})" style="background: var(--primary-green); color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; margin-right: 4px; font-weight: 600;" title="In hóa đơn">IN</button>
-                            <button onclick="app.viewOrderDetails(${originalIndex})" style="background: var(--primary-blue); color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; margin-right: 4px;">Chi tiết</button>
-                            <button onclick="app.deleteOrder(${originalIndex})" style="background: #ef4444; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer;">Xóa</button>
+                            <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+                                <button onclick="app.showPrintOptionsPopup(${originalIndex})" style="background: var(--primary-green); color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px; white-space: nowrap;" title="In hóa đơn">In</button>
+                                <button onclick="app.viewOrderDetails(${originalIndex})" style="background: var(--primary-blue); color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap;">Chi tiết</button>
+                                <button onclick="app.deleteOrder(${originalIndex})" style="background: #ef4444; color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap;" title="Xóa đơn">Xóa</button>
+                            </div>
                         </td>
                     </tr>
                     `;
@@ -2249,11 +2295,12 @@
                                             <tr style="background: #f8fafc;">
                                                 <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Mã đơn</th>
                                                 <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Khách hàng</th>
+                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Sản phẩm</th>
                                                 <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Thời gian</th>
                                                 <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Tổng tiền</th>
                                                 <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Thanh toán</th>
                                                 <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">TT Nhanh</th>
-                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Thao tác</th>
+                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; min-width: 140px;">Thao tác</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -2401,6 +2448,10 @@
                                 <div style="margin-top: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Báo giá (VNĐ):</label>
                                     <input type="text" class="price-input" name="repairCost" value="0" placeholder="Tiền công sửa chữa dự kiến" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
+                                </div>
+                                <div style="margin-top: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Giá linh kiện (VNĐ):</label>
+                                    <input type="text" class="price-input" name="partsManualCost" value="0" placeholder="Linh kiện không có trong sản phẩm - để tính doanh thu" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
                                 </div>
                                 <div style="margin-top: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Linh kiện sửa chữa:</label>
@@ -2574,7 +2625,7 @@
                         <input type="hidden" name="partProductId_${rowCount}" value="">
                     </div>
                     <input type="number" name="partQuantity_${rowCount}" value="1" min="1" style="width: 70px; padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
-                    <input type="number" name="partPrice_${rowCount}" readonly style="width: 110px; padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px; background: #f8fafc;">
+                    <input type="text" name="partPrice_${rowCount}" readonly placeholder="Giá bán" style="width: 110px; padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px; background: #f8fafc;">
                     <button type="button" onclick="app.removeRepairPartRow(this)" style="background: #ef4444; color: white; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; width: 60px;">Xóa</button>
                 `;
                 container.appendChild(div);
@@ -2619,6 +2670,7 @@
                 }
 
                 const repairCost = this.parsePrice(formData.get('repairCost'));
+                const partsManualCost = this.parsePrice(formData.get('partsManualCost'));
                 const productsData = this.demoData.products || [];
                 const neededByProduct = {};
                 parts.forEach(p => { if (p.productId) neededByProduct[p.productId] = (neededByProduct[p.productId] || 0) + (p.quantity || 0); });
@@ -2648,6 +2700,7 @@
                     deviceCondition: formData.get('deviceCondition') || '',
                     password: formData.get('password') || '',
                     repairCost: repairCost,
+                    partsManualCost: partsManualCost,
                     parts: parts,
                     warrantyPeriod: formData.get('warrantyPeriod') || '',
                     status: formData.get('status') || 'Đang sửa',
@@ -2682,8 +2735,9 @@
                     </div>`
                 ).join('');
                 const totalParts = (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0);
+                const partsManualCost = Number(r.partsManualCost) || 0;
                 const repairCost = Number(r.repairCost) || 0;
-                const totalAll = repairCost + totalParts;
+                const totalAll = repairCost + totalParts + partsManualCost;
 
                 const detailHTML = `
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this && window._modalMousedownTarget===this) closeModal(this)">
@@ -2698,14 +2752,16 @@
                             ${r.deviceCondition ? `<div style="margin-bottom: 12px;"><strong>Hiện trạng máy khi nhận:</strong> ${r.deviceCondition.replace(/</g, '&lt;')}</div>` : ''}
                             ${r.password ? `<div style="margin-bottom: 12px;"><strong>Mật khẩu:</strong> ${r.password.replace(/</g, '&lt;')}</div>` : ''}
                             ${repairCost > 0 ? `<div style="margin-bottom: 12px;"><strong>Báo giá:</strong> ${repairCost.toLocaleString('vi-VN')} đ</div>` : ''}
+                            ${partsManualCost > 0 ? `<div style="margin-bottom: 12px;"><strong>Giá linh kiện:</strong> ${partsManualCost.toLocaleString('vi-VN')} đ</div>` : ''}
                             <div style="margin-bottom: 12px;"><strong>Linh kiện sửa chữa:</strong>
                                 <div style="margin-top: 8px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px;">
                                     ${partsList}
                                     <div style="padding-top: 8px; font-weight: 600;">
-                                        ${totalParts > 0 ? `Linh kiện: ${totalParts.toLocaleString('vi-VN')} đ` : ''}
-                                        ${repairCost > 0 && totalParts > 0 ? '<br>' : ''}
-                                        ${repairCost > 0 ? `Chi phí sửa: ${repairCost.toLocaleString('vi-VN')} đ` : ''}
-                                        ${totalAll > 0 ? `<br>Tổng cộng: ${totalAll.toLocaleString('vi-VN')} đ` : ''}
+                                        ${totalParts > 0 ? `Linh kiện (từ sản phẩm): ${totalParts.toLocaleString('vi-VN')} đ` : ''}
+                                        ${(repairCost > 0 || totalParts > 0 || partsManualCost > 0) ? '<br>' : ''}
+                                        ${repairCost > 0 ? `Báo giá: ${repairCost.toLocaleString('vi-VN')} đ` : ''}
+                                        ${partsManualCost > 0 ? `${repairCost > 0 ? ' + ' : ''}Giá linh kiện: ${partsManualCost.toLocaleString('vi-VN')} đ` : ''}
+                                        ${totalAll > 0 ? `<br><strong>Tổng cộng: ${totalAll.toLocaleString('vi-VN')} đ</strong>` : ''}
                                     </div>
                                 </div>
                             </div>
@@ -2772,7 +2828,7 @@
                         <input type="hidden" name="partProductId_0" value="">
                     </div>
                     <input type="number" name="partQuantity_0" value="1" min="1" style="width: 70px; padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
-                    <input type="number" name="partPrice_0" readonly placeholder="Giá bán" style="width: 110px; padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px; background: #f8fafc;">
+                    <input type="text" name="partPrice_0" readonly placeholder="Giá bán" style="width: 110px; padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px; background: #f8fafc;">
                     <button type="button" onclick="app.removeRepairPartRow(this)" style="background: #ef4444; color: white; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; width: 60px;">Xóa</button>
                 </div>` : '';
 
@@ -2822,6 +2878,10 @@
                                 <div style="margin-top: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Báo giá (VNĐ):</label>
                                     <input type="text" class="price-input" name="repairCost" value="${this.formatPrice(Number(r.repairCost) || 0)}" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
+                                </div>
+                                <div style="margin-top: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Giá linh kiện (VNĐ):</label>
+                                    <input type="text" class="price-input" name="partsManualCost" value="${this.formatPrice(Number(r.partsManualCost) || 0)}" placeholder="Linh kiện không có trong sản phẩm - để tính doanh thu" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
                                 </div>
                                 <div style="margin-top: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Linh kiện sửa chữa:</label>
@@ -2914,7 +2974,7 @@
                         <input type="hidden" name="partProductId_${rowCount}" value="">
                     </div>
                     <input type="number" name="partQuantity_${rowCount}" value="1" min="1" style="width: 70px; padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px;">
-                    <input type="number" name="partPrice_${rowCount}" readonly style="width: 110px; padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px; background: #f8fafc;">
+                    <input type="text" name="partPrice_${rowCount}" readonly placeholder="Giá bán" style="width: 110px; padding: 8px; border: 2px solid #e5e7eb; border-radius: 6px; background: #f8fafc;">
                     <button type="button" onclick="app.removeRepairPartRow(this)" style="background: #ef4444; color: white; border: none; padding: 8px 12px; border-radius: 6px; cursor: pointer; width: 60px;">Xóa</button>
                 `;
                 container.appendChild(div);
@@ -3007,6 +3067,7 @@
                 r.deviceCondition = formData.get('deviceCondition') || '';
                 r.password = formData.get('password') || '';
                 r.repairCost = repairCost;
+                r.partsManualCost = this.parsePrice(formData.get('partsManualCost'));
                 r.parts = parts;
                 r.warrantyPeriod = formData.get('warrantyPeriod') || '';
                 r.status = formData.get('status') || 'Đang sửa';
@@ -3043,17 +3104,9 @@
                     return;
                 }
                 const repairId = r.id || 'SC' + String(index + 1).padStart(4, '0');
-                const totalParts = (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0);
                 const repairCost = Number(r.repairCost) || 0;
-                const totalAll = repairCost + totalParts;
                 const companySettings = this.getCompanySettings();
                 if (window.companyAssets && window.companyAssets.logo) companySettings.logo = window.companyAssets.logo;
-                const partsRows = (r.parts || []).length === 0 ? '<tr><td class="col-tt">-</td><td class="product-name col-product">Không có</td><td class="col-price">-</td><td class="col-sl">-</td><td class="col-total">-</td></tr>' : (r.parts || []).map((p, i) => {
-                    const price = p.price || 0;
-                    const qty = p.quantity || 1;
-                    const subtotal = price * qty;
-                    return `<tr><td class="col-tt">${i + 1}</td><td class="product-name col-product">${(p.name || '').replace(/</g, '&lt;')}</td><td class="col-price">${price.toLocaleString('vi-VN')} đ</td><td class="col-sl">${qty}</td><td class="col-total">${subtotal.toLocaleString('vi-VN')} đ</td></tr>`;
-                }).join('');
 
                 const pw = window.open('', '_blank', 'width=800,height=900');
                 if (!pw) {
@@ -3087,11 +3140,9 @@
                             .products-table th, .products-table td { border: 1px solid #000; padding: 2px 3px; vertical-align: middle; overflow: hidden; }
                             .products-table th { background: #f8fafc; color: #000; text-align: center; font-weight: bold; font-size: 9px; }
                             .products-table td { text-align: center; font-size: 9px; }
-                            .products-table .col-tt { width: 8%; text-align: center; }
-                            .products-table .col-product { width: 40%; text-align: left; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; font-size: 8px; }
-                            .products-table .col-price { width: 22%; text-align: right; font-size: 8px; }
-                            .products-table .col-sl { width: 10%; text-align: center; }
-                            .products-table .col-total { width: 20%; text-align: right; font-weight: 600; font-size: 8px; }
+                            .products-table .col-tt { width: 10%; text-align: center; }
+                            .products-table .col-product { width: 70%; text-align: left; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; font-size: 8px; }
+                            .products-table .col-sl { width: 20%; text-align: center; }
                             .product-name { text-align: left !important; font-weight: 500; word-wrap: break-word; overflow-wrap: break-word; word-break: break-word; font-size: 8px; max-width: 100%; }
                             .totals-section { width: 100%; margin: 2px 0; }
                             .total-row { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px solid #e5e7eb; font-size: 9px; }
@@ -3143,15 +3194,9 @@
                             ${r.imei ? '<div class="info-row" style="margin-bottom: 2px;"><span class="info-label">IMEI:</span><span class="info-value">&nbsp;' + (r.imei || '').replace(/</g, '&lt;') + '</span></div>' : ''}
                             ${r.deviceCondition ? '<div class="section-title">Hiện trạng máy khi nhận</div><div class="repair-desc">' + (r.deviceCondition || '').replace(/</g, '&lt;').replace(/\n/g, '<br>') + '</div>' : ''}
                             ${r.password ? '<div class="info-row" style="margin-bottom: 2px;"><span class="info-label">Mật khẩu:</span><span class="info-value">&nbsp;' + (r.password || '').replace(/</g, '&lt;') + '</span></div>' : ''}
-                            <div class="section-title">Linh kiện sửa chữa</div>
-                            <table class="products-table">
-                                <thead><tr><th class="col-tt">TT</th><th class="col-product">Sản phẩm</th><th class="col-price">Đơn giá</th><th class="col-sl">SL</th><th class="col-total">Thành tiền</th></tr></thead>
-                                <tbody>${partsRows}</tbody>
-                            </table>
                             <div class="totals-section">
-                                ${repairCost > 0 ? `<div class="total-row"><span>Báo giá:</span><span>${repairCost.toLocaleString('vi-VN')} đ</span></div>` : ''}
-                                ${totalParts > 0 ? `<div class="total-row"><span>Linh kiện:</span><span>${totalParts.toLocaleString('vi-VN')} đ</span></div>` : ''}
-                                <div class="total-row final"><span>TỔNG CỘNG:</span><span>${totalAll.toLocaleString('vi-VN')} đ</span></div>
+                                ${repairCost > 0 ? `<div class="total-row"><span>Báo giá (VNĐ):</span><span>${repairCost.toLocaleString('vi-VN')} đ</span></div>` : ''}
+                                <div class="total-row final"><span>TỔNG CỘNG:</span><span>${repairCost.toLocaleString('vi-VN')} đ</span></div>
                             </div>
                             ${r.notes ? '<div class="section-title">Ghi chú</div><div class="repair-desc">' + (r.notes || '').replace(/</g, '&lt;').replace(/\n/g, '<br>') + '</div>' : ''}
                             <div class="signature-section">
@@ -3208,7 +3253,21 @@
                     endDate.setHours(23, 59, 59, 999);
                     return orderDate >= startDate && orderDate <= endDate;
                 });
-                const totalRevenue = filteredOrders.reduce((s, o) => s + (o.total || 0), 0);
+                const filteredRepairs = (this.demoData.repairs || []).filter(rep => {
+                    const repDate = rep.date ? new Date(rep.date) : null;
+                    if (!repDate || isNaN(repDate.getTime())) return false;
+                    const startDate = new Date(fromDate);
+                    const endDate = new Date(toDate);
+                    endDate.setHours(23, 59, 59, 999);
+                    return repDate >= startDate && repDate <= endDate;
+                });
+                const repairRevenue = filteredRepairs.reduce((s, r) => {
+                    const repairCost = Number(r.repairCost) || 0;
+                    const totalParts = (r.parts || []).reduce((sum, p) => sum + (p.quantity || 0) * (p.price || 0), 0);
+                    const partsManualCost = Number(r.partsManualCost) || 0;
+                    return s + repairCost + totalParts + partsManualCost;
+                }, 0);
+                const totalRevenue = filteredOrders.reduce((s, o) => s + (o.total || 0), 0) + repairRevenue;
                 const totalProfit = filteredOrders.reduce((s, o) => s + this.calcOrderProfit(o), 0);
                 const profitFromDebt = filteredOrders.filter(o => o.paymentStatus === 'Công nợ').reduce((s, o) => s + this.calcOrderProfit(o), 0);
                 const profitMargin = totalRevenue > 0 ? ((totalProfit / totalRevenue) * 100).toFixed(1) : 0;
@@ -3281,7 +3340,7 @@
                                     <span class="stat-icon">📈</span>
                                 </div>
                                 <div class="stat-value">${totalRevenue.toLocaleString('vi-VN')} VNĐ</div>
-                                <div class="stat-change positive">${filteredOrders.length} đơn hàng trong khoảng chọn</div>
+                                <div class="stat-change positive">${filteredOrders.length} đơn hàng${filteredRepairs.length > 0 ? ', ' + filteredRepairs.length + ' phiếu sửa chữa' : ''} trong khoảng chọn</div>
                             </div>
                             
                             <div class="stat-card info">
@@ -3292,6 +3351,37 @@
                                 <div class="stat-value">${totalProfit.toLocaleString('vi-VN')} VNĐ</div>
                                 <div class="stat-change positive">Biên lợi nhuận ${profitMargin}%</div>
                                 <div id="profit-debt-notice" class="stat-change" style="${profitFromDebt > 0 ? 'color: #f59e0b; margin-top: 6px; font-weight: 600;' : 'display: none;'}">${profitFromDebt > 0 ? '⚠️ Chú ý: Bao gồm ' + profitFromDebt.toLocaleString('vi-VN') + ' từ đơn công nợ' : ''}</div>
+                            </div>
+                        </div>
+                        
+                        <div id="reports-repairs-section" style="background: white; border-radius: 12px; padding: 24px; margin-bottom: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); ${filteredRepairs.length === 0 ? 'display: none;' : ''}">
+                            <h3 style="margin-bottom: 16px; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                                <span>🔧</span> Phiếu sửa chữa trong khoảng chọn (${filteredRepairs.length})
+                            </h3>
+                            <div style="overflow-x: auto;">
+                                <table style="width: 100%; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="background: #f8fafc;">
+                                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Mã phiếu</th>
+                                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Khách hàng</th>
+                                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Ngày</th>
+                                            <th style="padding: 12px; text-align: right; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Doanh thu</th>
+                                            <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Trạng thái</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="reports-repairs-list">
+                                        ${filteredRepairs.map(r => {
+                                            const rev = (Number(r.repairCost) || 0) + (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                                            return `<tr style="border-bottom: 1px solid #e5e7eb;">
+                                                <td style="padding: 12px;">${(r.id || '').replace(/</g, '&lt;')}</td>
+                                                <td style="padding: 12px;">${(r.customerName || '-').replace(/</g, '&lt;')}</td>
+                                                <td style="padding: 12px;">${(r.date || '-')} ${(r.time || '')}</td>
+                                                <td style="padding: 12px; text-align: right; font-weight: 600;">${rev.toLocaleString('vi-VN')} đ</td>
+                                                <td style="padding: 12px;">${(r.status || '-').replace(/</g, '&lt;')}</td>
+                                            </tr>`;
+                                        }).join('')}
+                                    </tbody>
+                                </table>
                             </div>
                         </div>
                         
@@ -4198,6 +4288,7 @@
                 };
                 
                 this.saveToLocalStorage();
+                this.refreshAllCustomerDisplays();
                 this.showNotification(`Đã cập nhật thông tin khách hàng`, 'success');
                 this.loadPage('customers');
                 const modal = form.closest("div[style*=\"fixed\"]"); if(modal) modal.remove();
@@ -4309,9 +4400,10 @@
                                     <div style="font-size: 16px; font-weight: bold; margin-bottom: 4px;">${totalPaid.toLocaleString('vi-VN')} VNĐ</div>
                                     <div style="font-size: 12px; opacity: 0.9;">Đã thanh toán</div>
                                 </div>
-                                <div style="background: ${actualDebt > 0 ? 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)' : 'linear-gradient(135deg, #a8edea 0%, #fed6e3 100%)'}; color: ${actualDebt > 0 ? 'white' : '#374151'}; padding: 12px; border-radius: 8px; text-align: center;">
-                                    <div style="font-size: 16px; font-weight: bold; margin-bottom: 4px;">${actualDebt.toLocaleString('vi-VN')} VNĐ</div>
+                                <div style="background: ${(customer.debt||0) > 0 ? 'linear-gradient(135deg, #fa709a 0%, #fee140 100%)' : 'linear-gradient(135deg, #a8edea 0%, #fed6e3 100%)'}; color: ${(customer.debt||0) > 0 ? 'white' : '#374151'}; padding: 12px; border-radius: 8px; text-align: center;">
+                                    <div style="font-size: 16px; font-weight: bold; margin-bottom: 4px;">${(customer.debt||0).toLocaleString('vi-VN')} VNĐ</div>
                                     <div style="font-size: 12px; opacity: 0.9;">Công nợ hiện tại</div>
+                                    ${actualDebt !== (customer.debt||0) ? `<div style="font-size: 11px; opacity: 0.8; margin-top: 4px;">Từ đơn: ${actualDebt.toLocaleString('vi-VN')}</div>` : ''}
                                 </div>
                                 <div onclick="app.exportCustomerReport('${customer.id}', '${customer.name}')" style="background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); color: #374151; padding: 12px; border-radius: 8px; text-align: center; cursor: pointer; transition: transform 0.2s; position: relative;" onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
                                     <div style="font-size: 16px; font-weight: bold; margin-bottom: 4px;">📄</div>
@@ -4353,12 +4445,6 @@
                         </div>
                     </div>
                 `;
-                
-                // Cập nhật công nợ thực tế của khách hàng trong dữ liệu
-                if (this.demoData.customers[index].debt !== actualDebt) {
-                    this.demoData.customers[index].debt = actualDebt;
-                    this.saveToLocalStorage();
-                }
                 
                 document.body.insertAdjacentHTML('beforeend', detailHTML);
             }
@@ -7229,9 +7315,9 @@
                     return;
                 }
                 const categories = (this.demoData.categories || []).length ? this.demoData.categories : [];
-                const exists = categories.some(c => (c.name || '').trim().toLowerCase() === categoryName.toLowerCase());
+                const exists = categories.some(c => (c.parent == null || c.parent === '') && (c.name || '').trim().toLowerCase() === categoryName.toLowerCase());
                 if (exists) {
-                    this.showNotification(`Danh mục "${categoryName}" đã tồn tại. Vui lòng dùng tên khác.`, 'warning');
+                    this.showNotification(`Danh mục gốc "${categoryName}" đã tồn tại. Vui lòng dùng tên khác.`, 'warning');
                     return;
                 }
                 const newCategory = {
@@ -7260,9 +7346,9 @@
                     return;
                 }
                 const categories = (this.demoData.categories || []).length ? this.demoData.categories : [];
-                const exists = categories.some(c => (c.name || '').trim().toLowerCase() === categoryName.toLowerCase());
+                const exists = categories.some(c => String(c.parent || '') === String(parentId || '') && (c.name || '').trim().toLowerCase() === categoryName.toLowerCase());
                 if (exists) {
-                    this.showNotification(`Danh mục "${categoryName}" đã tồn tại. Vui lòng dùng tên khác.`, 'warning');
+                    this.showNotification(`Danh mục con "${categoryName}" đã tồn tại trong nhóm này. Vui lòng dùng tên khác.`, 'warning');
                     return;
                 }
                 const newCategory = {
@@ -9055,8 +9141,9 @@
                         const product = this.demoData.products.find(p => p.id === productIds[i]);
                         if (product) {
                             const requestedQty = parseInt(quantities[i]) || 1;
-                            if (product.stock < requestedQty) {
-                                outOfStockItems.push(`${product.name}: cần ${requestedQty}, chỉ còn ${product.stock}`);
+                            const stock = (product.hasImei && product.imeis) ? product.imeis.length : (product.stock || 0);
+                            if (stock < requestedQty) {
+                                outOfStockItems.push(`${product.name}: cần ${requestedQty}, chỉ còn ${stock}`);
                                 continue;
                             }
                             const discountType = (discountTypes[i] || 'vnd').toLowerCase();
@@ -9115,25 +9202,24 @@
                     paymentStatus: paymentStatus
                 };
 
-                // TRỪ TỒN KHO TỰ ĐỘNG
+                // TRỪ TỒN KHO TỰ ĐỘNG (hỗ trợ cả IMEI và sản phẩm thường)
                 const lowStockAlerts = [];
-                products.forEach(ordPhuocITroduct => {
-                    const productIndex = this.demoData.products.findIndex(p => p.id === ordPhuocITroduct.id);
-                    if (productIndex !== -1) {
-                        // Trừ tồn kho
-                        this.demoData.products[productIndex].stock -= ordPhuocITroduct.quantity;
-                        
-                        // Kiểm tra cảnh báo tồn kho thấp (bỏ qua sản phẩm IMEI - minStock=0)
-                        const updatedProduct = this.demoData.products[productIndex];
-                        const minS = (updatedProduct.hasImei && updatedProduct.imeis) ? 0 : (updatedProduct.minStock ?? 10);
-                        const stockS = (updatedProduct.hasImei && updatedProduct.imeis) ? updatedProduct.imeis.length : updatedProduct.stock;
-                        if (minS > 0 && stockS <= minS) {
-                            lowStockAlerts.push({
-                                name: updatedProduct.name,
-                                current: stockS,
-                                minimum: minS
-                            });
-                        }
+                products.forEach(ordProduct => {
+                    const prod = this.demoData.products.find(p => p.id === ordProduct.id);
+                    if (!prod) return;
+                    const qty = ordProduct.quantity || 1;
+                    if (prod.hasImei && prod.imeis && Array.isArray(prod.imeis)) {
+                        const toSell = Math.min(qty, prod.imeis.length);
+                        const soldImeis = prod.imeis.splice(0, toSell);
+                        ordProduct.soldImeis = soldImeis;
+                        ordProduct.productId = ordProduct.id;
+                    } else {
+                        prod.stock = Math.max(0, (prod.stock || 0) - qty);
+                    }
+                    const minS = (prod.hasImei && prod.imeis) ? 0 : (prod.minStock ?? 10);
+                    const stockS = (prod.hasImei && prod.imeis) ? prod.imeis.length : (prod.stock || 0);
+                    if (minS > 0 && stockS <= minS) {
+                        lowStockAlerts.push({ name: prod.name, current: stockS, minimum: minS });
                     }
                 });
 
@@ -9157,9 +9243,9 @@
                     `Khách hàng: ${customer.name} - Giá trị: ${total.toLocaleString('vi-VN')} VNĐ - ${products.length} sản phẩm - ${paymentStatus}`, 'order');
                 
                 // Ghi log hoạt động trừ tồn kho
-                products.forEach(ordPhuocITroduct => {
+                products.forEach(ordProduct => {
                     this.addActivityLog('info', '📦', `Trừ tồn kho`, 
-                        `Sản phẩm: ${ordPhuocITroduct.name} - Số lượng: ${ordPhuocITroduct.quantity}`, 'inventory');
+                        `Sản phẩm: ${ordProduct.name} - Số lượng: ${ordProduct.quantity || 1}`, 'inventory');
                 });
                 
                 // Hiển thị thông báo thành công
@@ -9432,9 +9518,18 @@
                     return;
                 }
                 
-                const oldOrderDebt = Math.max(0, (order.total || 0) - (order.amountPaid != null ? order.amountPaid : (order.paymentStatus === 'Công nợ' ? order.total : 0)));
-                oldCustomer.debt -= oldOrderDebt;
-                if (oldCustomer.debt < 0) oldCustomer.debt = 0;
+                const oldOrderDebt = Math.max(0, (order.total || 0) - (order.amountPaid != null ? order.amountPaid : (order.paymentStatus === 'Đã thanh toán' ? order.total : 0)));
+                const productsData = this.demoData.products || [];
+                const oldByPid = {};
+                (order.products || []).forEach(op => {
+                    const pid = op.id || op.productId;
+                    if (!pid) return;
+                    if (!oldByPid[pid]) oldByPid[pid] = { qty: 0, soldImeis: [] };
+                    oldByPid[pid].qty += (op.quantity || 1);
+                    if (op.soldImeis && Array.isArray(op.soldImeis)) {
+                        oldByPid[pid].soldImeis = (oldByPid[pid].soldImeis || []).concat(op.soldImeis);
+                    }
+                });
                 
                 // Lấy thông tin sản phẩm mới
                 const products = [];
@@ -9480,6 +9575,57 @@
                 if (newAmountPaid > newTotal) newAmountPaid = newTotal;
                 if (newPaymentStatus === 'Đã thanh toán' && newAmountPaid === 0) newAmountPaid = newTotal;
                 const newOrderDebt = newTotal - newAmountPaid;
+                
+                const newByPid = {};
+                products.forEach(p => {
+                    const pid = p.id || p.productId;
+                    if (!newByPid[pid]) newByPid[pid] = 0;
+                    newByPid[pid] += (p.quantity || 1);
+                });
+                for (const pid of Object.keys(newByPid)) {
+                    const prod = productsData.find(p => p.id === pid);
+                    if (!prod) continue;
+                    const needQty = newByPid[pid];
+                    const oldInfo = oldByPid[pid];
+                    let available = 0;
+                    if (prod.hasImei && prod.imeis) {
+                        available = prod.imeis.length + (oldInfo && oldInfo.soldImeis ? oldInfo.soldImeis.length : 0);
+                    } else {
+                        available = (prod.stock || 0) + (oldInfo ? oldInfo.qty : 0);
+                    }
+                    if (available < needQty) {
+                        this.showNotification(`${prod.name}: cần ${needQty}, khả dụng ${available} (sau khi hoàn trả từ đơn cũ)`, 'error');
+                        return;
+                    }
+                }
+                
+                (order.products || []).forEach(op => {
+                    const prod = productsData.find(p => p.id === (op.id || op.productId));
+                    if (!prod || !(op.quantity > 0)) return;
+                    if (op.soldImeis && Array.isArray(op.soldImeis)) {
+                        prod.imeis = prod.imeis || [];
+                        op.soldImeis.forEach(imei => prod.imeis.push(imei));
+                    } else {
+                        prod.stock = (prod.stock || 0) + op.quantity;
+                    }
+                });
+                
+                for (const pr of products) {
+                    const prod = productsData.find(p => p.id === (pr.id || pr.productId));
+                    if (!prod) continue;
+                    const qty = pr.quantity || 1;
+                    if (prod.hasImei && prod.imeis && Array.isArray(prod.imeis)) {
+                        const toSell = Math.min(qty, prod.imeis.length);
+                        const soldImeis = prod.imeis.splice(0, toSell);
+                        pr.soldImeis = soldImeis;
+                        pr.productId = pr.id || pr.productId;
+                    } else {
+                        prod.stock = Math.max(0, (prod.stock || 0) - qty);
+                    }
+                }
+                
+                oldCustomer.debt -= oldOrderDebt;
+                if (oldCustomer.debt < 0) oldCustomer.debt = 0;
                 order.customerId = newCustomer.id;
                 order.customerName = newCustomer.name;
                 order.products = products;
@@ -9517,6 +9663,17 @@
                 const order = this.demoData.orders[index];
                 if (!order) return;
                 if (confirm(`Bạn có chắc muốn xóa đơn hàng ${order.id}?`)) {
+                    const products = this.demoData.products || [];
+                    (order.products || []).forEach(op => {
+                        const prod = products.find(p => p.id === (op.id || op.productId));
+                        if (!prod || !(op.quantity > 0)) return;
+                        if (op.soldImeis && Array.isArray(op.soldImeis)) {
+                            prod.imeis = prod.imeis || [];
+                            op.soldImeis.forEach(imei => prod.imeis.push(imei));
+                        } else {
+                            prod.stock = (prod.stock || 0) + op.quantity;
+                        }
+                    });
                     const customer = this.demoData.customers.find(c => c.id === order.customerId || c.name === order.customerName);
                     const orderDebt = Math.max(0, (order.total || 0) - (order.amountPaid != null ? order.amountPaid : (order.paymentStatus === 'Đã thanh toán' ? order.total : 0)));
                     if (customer && orderDebt > 0) {
@@ -9525,7 +9682,7 @@
                     }
                     this.demoData.orders.splice(index, 1);
                     this.saveToLocalStorage();
-                    this.showNotification(`Đã xóa đơn hàng ${order.id}`, 'success');
+                    this.showNotification(`Đã xóa đơn hàng ${order.id} và hoàn trả tồn kho`, 'success');
                     this.loadPage(redirectTo || 'orders');
                 }
             }
@@ -9556,8 +9713,12 @@
                 const products = this.demoData.products || [];
                 (this.demoData.orders || []).forEach(order => {
                     (order.products || []).forEach(op => {
-                        const p = products.find(pr => pr.id === op.id);
-                        if (p && op.quantity) {
+                        const p = products.find(pr => pr.id === (op.id || op.productId));
+                        if (!p || !(op.quantity > 0)) return;
+                        if (op.soldImeis && Array.isArray(op.soldImeis)) {
+                            p.imeis = p.imeis || [];
+                            op.soldImeis.forEach(imei => p.imeis.push(imei));
+                        } else {
                             p.stock = (p.stock || 0) + op.quantity;
                         }
                     });
@@ -9831,8 +9992,13 @@
             
             showTrendAnalysis() {
                 // Tính toán dữ liệu phân tích
-                const totalRevenue = this.demoData.orders.reduce((sum, order) => sum + order.total, 0);
-                const avgOrderValue = this.demoData.orders.length > 0 ? totalRevenue / this.demoData.orders.length : 0;
+                const orderRevenue = this.demoData.orders.reduce((sum, order) => sum + (order.total || 0), 0);
+                const repairRevenue = (this.demoData.repairs || []).reduce((s, r) => {
+                    return s + (Number(r.repairCost) || 0) + (r.parts || []).reduce((sp, p) => sp + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                }, 0);
+                const totalRevenue = orderRevenue + repairRevenue;
+                const totalTransactions = this.demoData.orders.length + (this.demoData.repairs || []).length;
+                const avgOrderValue = totalTransactions > 0 ? totalRevenue / totalTransactions : 0;
                 const totalDebt = this.demoData.customers.reduce((sum, c) => sum + c.debt, 0);
                 const paidOrders = this.demoData.orders.filter(order => order.paymentStatus === 'Đã thanh toán').length;
                 const unpaidOrders = this.demoData.orders.filter(order => order.paymentStatus === 'Công nợ').length;
@@ -11625,8 +11791,18 @@
                     return orderDate >= startDate && orderDate <= endDate;
                 });
 
-                // Tính toán lại các số liệu thống kê (Doanh thu & Lợi nhuận tính cả đơn Công nợ)
-                const totalRevenue = filteredOrders.reduce((sum, order) => sum + (order.total || 0), 0);
+                const filteredRepairs = (this.demoData.repairs || []).filter(rep => {
+                    const repDate = rep.date ? new Date(rep.date) : null;
+                    if (!repDate || isNaN(repDate.getTime())) return false;
+                    return repDate >= startDate && repDate <= endDate;
+                });
+                const repairRevenue = filteredRepairs.reduce((s, r) => {
+                    return s + (Number(r.repairCost) || 0) + (r.parts || []).reduce((sp, p) => sp + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                }, 0);
+
+                // Tính toán lại các số liệu thống kê (Doanh thu = đơn hàng + sửa chữa)
+                const orderRevenue = filteredOrders.reduce((sum, order) => sum + (order.total || 0), 0);
+                const totalRevenue = orderRevenue + repairRevenue;
 
                 const totalProfit = filteredOrders.reduce((sum, order) => sum + this.calcOrderProfit(order), 0);
                 const profitFromDebt = filteredOrders.filter(o => o.paymentStatus === 'Công nợ').reduce((sum, o) => sum + this.calcOrderProfit(o), 0);
@@ -11636,14 +11812,40 @@
                 }, 0);
 
                 // Cập nhật display thống kê
-                this.updateFilteredStats(totalRevenue, totalProfit, totalDebt, filteredOrders.length, profitFromDebt);
+                this.updateFilteredStats(totalRevenue, totalProfit, totalDebt, filteredOrders.length, profitFromDebt, filteredRepairs.length);
 
                 // Cập nhật danh sách đơn hàng hiển thị
                 this.updateOrdersList(filteredOrders);
+
+                // Cập nhật danh sách phiếu sửa chữa
+                this.updateRepairsListInReport(filteredRepairs);
+            }
+
+            updateRepairsListInReport(filteredRepairs) {
+                const section = document.getElementById('reports-repairs-section');
+                const container = document.getElementById('reports-repairs-list');
+                if (!section || !container) return;
+                if (filteredRepairs.length === 0) {
+                    section.style.display = 'none';
+                    return;
+                }
+                section.style.display = '';
+                const header = section ? section.querySelector('h3') : null;
+                if (header) header.innerHTML = `<span>🔧</span> Phiếu sửa chữa trong khoảng chọn (${filteredRepairs.length})`;
+                container.innerHTML = filteredRepairs.map(r => {
+                    const rev = (Number(r.repairCost) || 0) + (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                    return `<tr style="border-bottom: 1px solid #e5e7eb;">
+                        <td style="padding: 12px;">${(r.id || '').replace(/</g, '&lt;')}</td>
+                        <td style="padding: 12px;">${(r.customerName || '-').replace(/</g, '&lt;')}</td>
+                        <td style="padding: 12px;">${(r.date || '-')} ${(r.time || '')}</td>
+                        <td style="padding: 12px; text-align: right; font-weight: 600;">${rev.toLocaleString('vi-VN')} đ</td>
+                        <td style="padding: 12px;">${(r.status || '-').replace(/</g, '&lt;')}</td>
+                    </tr>`;
+                }).join('');
             }
 
             // Cập nhật hiển thị thống kê sau khi lọc
-            updateFilteredStats(revenue, profit, debt, orderCount, profitFromDebt = 0) {
+            updateFilteredStats(revenue, profit, debt, orderCount, profitFromDebt = 0, repairCount = 0) {
                 // Cập nhật các card thống kê
                 const revenueCard = document.querySelector('.stat-card.revenue .stat-value');
                 const profitCard = document.querySelector('.stat-card.info .stat-value');
@@ -11653,6 +11855,11 @@
                 }
                 if (profitCard) {
                     profitCard.textContent = profit.toLocaleString('vi-VN') + ' VNĐ';
+                }
+
+                const revenueStatChange = document.querySelector('.stat-card.revenue .stat-change');
+                if (revenueStatChange) {
+                    revenueStatChange.textContent = orderCount + ' đơn hàng' + (repairCount > 0 ? ', ' + repairCount + ' phiếu sửa chữa' : '') + ' trong khoảng chọn';
                 }
 
                 const debtNotice = document.getElementById('profit-debt-notice');
@@ -11672,7 +11879,8 @@
                 const activityDesc = document.querySelector('.activity-desc');
                 if (activityDesc) {
                     const profitMargin = revenue > 0 ? ((profit / revenue) * 100).toFixed(1) : 0;
-                    activityDesc.textContent = `Doanh thu: ${revenue.toLocaleString('vi-VN')} VNĐ - ${orderCount} đơn hàng - Lợi nhuận: ${profitMargin}%`;
+                    const repairText = repairCount > 0 ? ', ' + repairCount + ' phiếu sửa chữa' : '';
+                    activityDesc.textContent = `Doanh thu: ${revenue.toLocaleString('vi-VN')} VNĐ - ${orderCount} đơn hàng${repairText} - Lợi nhuận: ${profitMargin}%`;
                 }
             }
 
@@ -11795,9 +12003,17 @@
                     return orderDate >= startDate && orderDate <= endDate;
                 });
 
+                const filteredRepairs = (this.demoData.repairs || []).filter(rep => {
+                    const repDate = rep.date ? new Date(rep.date) : null;
+                    if (!repDate || isNaN(repDate.getTime())) return false;
+                    return repDate >= startDate && repDate <= endDate;
+                });
+
+                const calcRepairTotal = (r) => (Number(r.repairCost) || 0) + (r.parts || []).reduce((s, p) => s + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+
                 // Sắp xếp và tạo dữ liệu báo cáo
                 const sortedFilteredOrders = this.sortOrdersByDate(filteredOrders);
-                const salesData = sortedFilteredOrders.map(order => {
+                const salesDataOrders = sortedFilteredOrders.map(order => {
                     const customer = this.demoData.customers.find(c => c.id === order.customerId);
                     // Sử dụng order.products thay vì order.items
                     const itemCount = order.products ? order.products.length : 0;
@@ -11812,6 +12028,18 @@
                     };
                 });
 
+                const salesDataRepairs = filteredRepairs.map(r => ({
+                    id: r.id || 'SC-',
+                    customer: r.customerName || 'N/A',
+                    date: r.date,
+                    items: 'Sửa chữa',
+                    total: calcRepairTotal(r),
+                    paymentStatus: '-',
+                    status: r.status || '-'
+                }));
+
+                const salesData = [...salesDataOrders, ...salesDataRepairs].sort((a, b) => new Date(a.date) - new Date(b.date));
+
                 // Đóng popup export
                 const exportModal = document.querySelector('div[style*="position: fixed"]');
                 if (exportModal) {
@@ -11819,7 +12047,7 @@
                 }
 
                 if (salesData.length === 0) {
-                    this.showNotification('Không có đơn hàng nào trong khoảng thời gian này', 'info');
+                    this.showNotification('Không có đơn hàng hoặc phiếu sửa chữa nào trong khoảng thời gian này', 'info');
                     return;
                 }
 
@@ -12109,8 +12337,18 @@
                     return orderDate >= startDate && orderDate <= endDate;
                 });
 
+                const filteredRepairs = (this.demoData.repairs || []).filter(rep => {
+                    const repDate = rep.date ? new Date(rep.date) : null;
+                    if (!repDate || isNaN(repDate.getTime())) return false;
+                    return repDate >= startDate && repDate <= endDate;
+                });
+                const repairRevenue = filteredRepairs.reduce((s, r) => {
+                    return s + (Number(r.repairCost) || 0) + (r.parts || []).reduce((sp, p) => sp + (p.quantity || 0) * (p.price || 0), 0) + (Number(r.partsManualCost) || 0);
+                }, 0);
+
                 // Tính toán các chỉ số tài chính
-                const totalRevenue = filteredOrders.filter(order => order.paymentStatus === 'Đã thanh toán').reduce((sum, order) => sum + order.total, 0);
+                const orderRevenue = filteredOrders.filter(order => order.paymentStatus === 'Đã thanh toán').reduce((sum, order) => sum + (order.total || 0), 0);
+                const totalRevenue = orderRevenue + repairRevenue;
                 const totalDebt = this.demoData.customers.reduce((sum, customer) => sum + customer.debt, 0);
                 const totalInventoryValue = this.demoData.products.reduce((sum, p) => sum + (p.price * p.stock), 0);
 
@@ -12122,6 +12360,7 @@
                     { category: 'DOANH THU VÀ BÁN HÀNG', value: '' },
                     { category: 'Tổng doanh thu', value: totalRevenue.toLocaleString('vi-VN') + ' VNĐ' },
                     { category: 'Số đơn hàng', value: filteredOrders.length.toString() },
+                    { category: 'Số phiếu sửa chữa', value: filteredRepairs.length.toString() },
                     { category: 'Đơn hoàn thành', value: filteredOrders.filter(o => o.status === 'Hoàn thành').length.toString() },
                     { category: 'Đơn đã thanh toán', value: filteredOrders.filter(o => o.paymentStatus === 'Đã thanh toán').length.toString() },
                     { category: '', value: '' },
