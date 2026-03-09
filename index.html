@@ -235,6 +235,7 @@
                 this.productsCategoryFilter = '';
                 this.productsPage = 1;
                 this.productsPerPage = 50;
+                this.inventoryStatusFilter = 'all'; // 'all' | 'low' | 'warning' | 'good'
                 this.demoData = this.generateDemoData(); // Tạm dùng demo cho đến khi load xong
                 this._ready = false;
                 this._saveDebounceTimer = null;
@@ -354,10 +355,6 @@
                         if (rep.amountPaid == null && rep.paymentStatus == null) {
                             rep.amountPaid = (rep.status || '') === 'Đã trả' ? cost : 0;
                             rep.paymentStatus = rep.amountPaid >= cost ? 'Đã thanh toán' : 'Công nợ';
-                            needsSave = true;
-                        } else if ((rep.status || '') === 'Đã trả' && rep.paymentStatus === 'Công nợ' && (Number(rep.amountPaid) ?? 0) < cost) {
-                            rep.amountPaid = cost;
-                            rep.paymentStatus = 'Đã thanh toán';
                             needsSave = true;
                         }
                     });
@@ -1175,12 +1172,7 @@
                 const q = (this.productsSearchQuery || '').trim().toLowerCase();
                 const catFilter = (this.productsCategoryFilter || '').trim();
                 let filtered = this.demoData.products;
-                if (q) {
-                    filtered = filtered.filter(p =>
-                        (p.name && p.name.toLowerCase().includes(q)) ||
-                        (p.category && p.category.toLowerCase().includes(q))
-                    );
-                }
+                if (q) filtered = filtered.filter(p => this.productMatchesSearchQuery(p, q));
                 if (catFilter) filtered = filtered.filter(p => this.productMatchesCategoryFilter(p, catFilter));
                 filtered = [...filtered].reverse();
                 const perPage = Math.max(10, parseInt(this.productsPerPage, 10) || 50);
@@ -1223,7 +1215,7 @@
                                     <span class="stat-icon">⚠️</span>
                                 </div>
                                 <div class="stat-value">${this.demoData.products.filter(p => {
-                                    const min = (p.hasImei && p.imeis) ? 0 : (p.minStock ?? 10);
+                                    const min = (p.hasImei && p.imeis) ? 0 : (p.minStock ?? 1);
                                     const stock = (p.hasImei && p.imeis) ? (p.stock != null ? p.stock : p.imeis.length) : (p.stock || 0);
                                     return min > 0 && stock <= min;
                                 }).length}</div>
@@ -1332,6 +1324,17 @@
                 }).join('');
             }
 
+            // Bỏ dấu tiếng Việt để tìm kiếm không cần gõ dấu (cuong → Cường, nguyen → Nguyễn)
+            removeAccents(str) {
+                if (!str) return '';
+                return String(str).replace(/đ/g,'d').replace(/Đ/g,'D').normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+            }
+            searchMatch(text, query) {
+                if (!query || !String(query).trim()) return true;
+                const t = this.removeAccents((text||'').toLowerCase());
+                const q = this.removeAccents(String(query).trim().toLowerCase());
+                return t.includes(q);
+            }
             formatPrice(num) { return (num || 0).toLocaleString('vi-VN'); }
             parsePrice(str) { const n = parseInt(String(str||'').replace(/\D/g,''), 10); return isNaN(n) ? 0 : Math.max(0, n); }
             priceInputFocus(el) { el.value = String(this.parsePrice(el.value)); }
@@ -1390,12 +1393,7 @@
                 const q = (this.productsSearchQuery || '').trim().toLowerCase();
                 const catFilter = (this.productsCategoryFilter || '').trim();
                 let filtered = this.demoData.products;
-                if (q) {
-                    filtered = filtered.filter(p =>
-                        (p.name && p.name.toLowerCase().includes(q)) ||
-                        (p.category && p.category.toLowerCase().includes(q))
-                    );
-                }
+                if (q) filtered = filtered.filter(p => this.productMatchesSearchQuery(p, q));
                 if (catFilter) filtered = filtered.filter(p => this.productMatchesCategoryFilter(p, catFilter));
                 filtered = [...filtered].reverse();
                 const perPage = Math.max(10, parseInt(this.productsPerPage, 10) || 50);
@@ -1435,7 +1433,7 @@
                 const q = (this.productsSearchQuery || '').trim().toLowerCase();
                 const catFilter = (this.productsCategoryFilter || '').trim();
                 let filtered = this.demoData.products;
-                if (q) filtered = filtered.filter(p => (p.name && p.name.toLowerCase().includes(q)) || (p.category && p.category.toLowerCase().includes(q)));
+                if (q) filtered = filtered.filter(p => this.productMatchesSearchQuery(p, q));
                 if (catFilter) filtered = filtered.filter(p => this.productMatchesCategoryFilter(p, catFilter));
                 filtered = [...filtered].reverse();
                 const perPage = Math.max(10, parseInt(this.productsPerPage, 10) || 50);
@@ -1462,7 +1460,7 @@
                 const q = (this.productsSearchQuery || '').trim().toLowerCase();
                 const catFilter = (this.productsCategoryFilter || '').trim();
                 let filtered = this.demoData.products;
-                if (q) filtered = filtered.filter(p => (p.name && p.name.toLowerCase().includes(q)) || (p.category && p.category.toLowerCase().includes(q)));
+                if (q) filtered = filtered.filter(p => this.productMatchesSearchQuery(p, q));
                 if (catFilter) filtered = filtered.filter(p => this.productMatchesCategoryFilter(p, catFilter));
                 filtered = [...filtered].reverse();
                 const perPage = Math.max(10, parseInt(this.productsPerPage, 10) || 50);
@@ -1509,10 +1507,12 @@
                 }
                 const found = [];
                 (this.demoData.orders || []).forEach((order, oi) => {
-                    (order.products || []).forEach(op => {
+                    (order.products || []).forEach((op, pi) => {
                         const imeis = op.soldImeis || [];
                         if (imeis.some(imei => String(imei || '').trim().toLowerCase().includes(q.toLowerCase()))) {
                             found.push({
+                                orderIndex: oi,
+                                productIndex: pi,
                                 orderId: order.id,
                                 orderDate: (order.date || '') + ' ' + (order.time || ''),
                                 customer: order.customerName || '-',
@@ -1525,9 +1525,68 @@
                 if (found.length === 0) {
                     resultEl.innerHTML = '<p style="color: #6b7280;">Không tìm thấy IMEI <strong>' + escapeHtml(q) + '</strong> trong đơn hàng đã bán.</p>';
                 } else {
-                    resultEl.innerHTML = '<div style="background: #ecfdf5; border: 1px solid #10b981; border-radius: 8px; padding: 12px; margin-bottom: 8px;"><strong style="color: #059669;">✓ Tìm thấy ' + found.length + ' kết quả</strong></div>' +
-                        found.map(f => '<div style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px; background: #f8fafc;"><strong>' + escapeHtml(f.productName) + '</strong> x' + f.quantity + '<br><span style="font-size: 12px; color: #6b7280;">Đơn ' + escapeHtml(f.orderId) + ' · ' + escapeHtml(f.orderDate) + ' · Khách: ' + escapeHtml(f.customer) + '</span></div>').join('');
+                    resultEl.innerHTML = '<div style="background: #ecfdf5; border: 1px solid #10b981; border-radius: 8px; padding: 12px; margin-bottom: 8px;"><strong style="color: #059669;">✓ Tìm thấy ' + found.length + ' kết quả</strong></div><p style="font-size: 12px; color: #6b7280; margin-bottom: 8px;">👆 Nhấn vào sản phẩm để xem chi tiết đầy đủ</p>' +
+                        found.map((f, fi) => '<div role="button" tabindex="0" onclick="app.showImeiSoldProductDetail(' + f.orderIndex + ',' + f.productIndex + ')" onkeypress="if(event.key===\'Enter\')app.showImeiSoldProductDetail(' + f.orderIndex + ',' + f.productIndex + ')" style="padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 8px; background: #f8fafc; cursor: pointer; transition: background 0.2s;" onmouseover="this.style.background=\'#e2e8f0\'" onmouseout="this.style.background=\'#f8fafc\'"><strong>' + escapeHtml(f.productName) + '</strong> x' + f.quantity + '<br><span style="font-size: 12px; color: #6b7280;">Đơn ' + escapeHtml(f.orderId) + ' · ' + escapeHtml(f.orderDate) + ' · Khách: ' + escapeHtml(f.customer) + '</span></div>').join('');
                 }
+            }
+            showImeiSoldProductDetail(orderIndex, productIndex) {
+                const order = (this.demoData.orders || [])[orderIndex];
+                if (!order || !(order.products || [])[productIndex]) return;
+                const op = order.products[productIndex];
+                const prod = this.demoData.products.find(p => p.id === op.id || p.id === op.productId);
+                const customer = this.demoData.customers.find(c => c.id === order.customerId || c.name === order.customerName || c.name === order.customerId);
+                const soldImeis = op.soldImeis || [];
+                const price = op.price != null && !isNaN(op.price) ? op.price : (prod ? prod.price : 0);
+                const subtotal = (op.quantity || 1) * price;
+                const orderPaid = order.amountPaid != null ? order.amountPaid : (order.paymentStatus === 'Đã thanh toán' ? order.total : 0);
+                const orderDebt = Math.max(0, (order.total || 0) - orderPaid);
+                const modalHTML = `
+                    <div id="imei-sold-detail-modal" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1002; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this) document.getElementById('imei-sold-detail-modal').remove()">
+                        <div style="background: white; padding: 24px; border-radius: 12px; width: 540px; max-width: 95vw; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation()">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                                <h3 style="margin: 0; color: var(--text-primary);">📋 Chi tiết sản phẩm đã bán</h3>
+                                <button type="button" onclick="document.getElementById('imei-sold-detail-modal').remove()" style="background: none; border: none; font-size: 24px; cursor: pointer; color: #6b7280;">×</button>
+                            </div>
+                            <div style="background: #f9fafb; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                                <div style="font-size: 12px; color: #6b7280; margin-bottom: 12px; font-weight: 600;">THÔNG TIN ĐƠN HÀNG</div>
+                                <div style="display: grid; gap: 8px; font-size: 14px;">
+                                    <div><span style="color: #6b7280;">Mã đơn:</span> <strong>${escapeHtml(order.id)}</strong></div>
+                                    <div><span style="color: #6b7280;">Ngày giờ:</span> ${escapeHtml((order.date || '') + ' ' + (order.time || ''))}</div>
+                                    <div><span style="color: #6b7280;">Khách hàng:</span> ${escapeHtml(customer ? customer.name : order.customerName || '-')}</div>
+                                    ${customer && customer.phone ? '<div><span style="color: #6b7280;">SĐT:</span> ' + escapeHtml(customer.phone) + '</div>' : ''}
+                                    ${customer && customer.address ? '<div><span style="color: #6b7280;">Địa chỉ:</span> ' + escapeHtml(customer.address) + '</div>' : ''}
+                                    <div><span style="color: #6b7280;">Thanh toán:</span> ${escapeHtml(order.paymentMethod || '-')} · <span style="color: ' + (order.paymentStatus === 'Đã thanh toán' ? '#059669' : '#f59e0b') + ';">${escapeHtml(order.paymentStatus || '-')}</span></div>
+                                    <div><span style="color: #6b7280;">Tổng đơn:</span> <strong style="color: #dc2626;">${(order.total || 0).toLocaleString('vi-VN')} VNĐ</strong></div>
+                                    ${orderDebt > 0 ? '<div><span style="color: #6b7280;">Còn nợ:</span> <strong style="color: #dc2626;">' + orderDebt.toLocaleString('vi-VN') + ' VNĐ</strong></div>' : ''}
+                                    ${order.notes ? '<div><span style="color: #6b7280;">Ghi chú:</span> ' + escapeHtml(order.notes) + '</div>' : ''}
+                                </div>
+                            </div>
+                            <div style="background: #f0fdf4; padding: 16px; border-radius: 8px; margin-bottom: 16px; border: 1px solid #86efac;">
+                                <div style="font-size: 12px; color: #15803d; margin-bottom: 12px; font-weight: 600;">THÔNG TIN SẢN PHẨM</div>
+                                <div style="display: grid; gap: 8px; font-size: 14px;">
+                                    <div><span style="color: #6b7280;">Mã SP:</span> <strong>${escapeHtml(op.id || op.productId || prod ? prod.id : '-')}</strong></div>
+                                    <div><span style="color: #6b7280;">Tên:</span> <strong>${escapeHtml(op.name || op.productName || prod ? prod.name : '-')}</strong></div>
+                                    ${prod && prod.category ? '<div><span style="color: #6b7280;">Danh mục:</span> ' + escapeHtml(prod.category) + '</div>' : ''}
+                                    <div><span style="color: #6b7280;">Số lượng:</span> <strong>${op.quantity || 1}</strong></div>
+                                    <div><span style="color: #6b7280;">Đơn giá:</span> ${price.toLocaleString('vi-VN')} VNĐ</div>
+                                    <div><span style="color: #6b7280;">Thành tiền:</span> <strong style="color: #dc2626;">${subtotal.toLocaleString('vi-VN')} VNĐ</strong></div>
+                                    ${prod && prod.importPrice != null ? '<div><span style="color: #6b7280;">Giá nhập:</span> ' + (prod.importPrice || 0).toLocaleString('vi-VN') + ' VNĐ</div>' : ''}
+                                    ${prod && prod.supplier ? '<div><span style="color: #6b7280;">Nhà cung cấp:</span> ' + escapeHtml(prod.supplier) + '</div>' : ''}
+                                </div>
+                            </div>
+                            ${soldImeis.length > 0 ? `
+                            <div style="background: #eff6ff; padding: 16px; border-radius: 8px; border: 1px solid #93c5fd;">
+                                <div style="font-size: 12px; color: #1d4ed8; margin-bottom: 12px; font-weight: 600;">IMEI ĐÃ BÁN (${soldImeis.length})</div>
+                                <div style="font-family: monospace; font-size: 14px; word-break: break-all;">${soldImeis.map(imei => escapeHtml(imei)).join(', ')}</div>
+                            </div>
+                            ` : ''}
+                            <div style="margin-top: 20px;">
+                                <button type="button" onclick="document.getElementById('imei-sold-detail-modal').remove()" style="padding: 10px 24px; background: #6b7280; color: white; border: none; border-radius: 8px; cursor: pointer;">Đóng</button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                document.body.insertAdjacentHTML('beforeend', modalHTML);
             }
             bulkDeleteProducts() {
                 if (this.selectedProductIds.size === 0) return;
@@ -1635,7 +1694,7 @@
             
             getInventoryContent() {
                 const getStock = (p) => (p.hasImei && p.imeis) ? (p.stock != null ? p.stock : p.imeis.length) : (p.stock || 0);
-                const getMinStock = (p) => (p.hasImei && p.imeis) ? 0 : (p.minStock ?? 10);
+                const getMinStock = (p) => (p.hasImei && p.imeis) ? 0 : (p.minStock ?? 1);
                 const totalValue = this.demoData.products.reduce((sum, p) => sum + (getStock(p) * (p.importPrice || 0)), 0);
                 const lowStockProducts = this.demoData.products.filter(p => {
                     const min = getMinStock(p);
@@ -1660,7 +1719,7 @@
                             <div class="inventory-low-stock-grid">
                                 ${lowStockProducts.map(p => {
                                     const stock = (p.hasImei && p.imeis) ? (p.stock != null ? p.stock : p.imeis.length) : (p.stock || 0);
-                                    const min = (p.hasImei && p.imeis) ? 0 : (p.minStock ?? 10);
+                                    const min = (p.hasImei && p.imeis) ? 0 : (p.minStock ?? 1);
                                     return `
                                     <div class="inventory-low-stock-card">
                                         <div class="inventory-low-stock-name">${escapeHtml(p.name)}</div>
@@ -1756,10 +1815,11 @@
                             
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                                 <h3 style="margin: 0; color: var(--text-primary);">Danh sách sản phẩm trong kho</h3>
-                                <div style="display: flex; gap: 8px; font-size: 12px;">
-                                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 8px; height: 8px; background: #ef4444; border-radius: 50%; display: inline-block;"></span>Sắp hết</span>
-                                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 8px; height: 8px; background: #f59e0b; border-radius: 50%; display: inline-block;"></span>Ít hàng</span>
-                                    <span style="display: flex; align-items: center; gap: 4px;"><span style="width: 8px; height: 8px; background: #10b981; border-radius: 50%; display: inline-block;"></span>Đủ hàng</span>
+                                <div style="display: flex; gap: 8px; font-size: 12px; flex-wrap: wrap;">
+                                    <span class="inventory-filter-chip" data-filter="all" onclick="app.setInventoryStatusFilter('all')" style="display: flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 20px; cursor: pointer; transition: all 0.2s; ${(this.inventoryStatusFilter || 'all') === 'all' ? 'background: #e5e7eb; font-weight: 600;' : 'background: #f3f4f6;'}">Tất cả</span>
+                                    <span class="inventory-filter-chip" data-filter="low" onclick="app.setInventoryStatusFilter('low')" style="display: flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 20px; cursor: pointer; transition: all 0.2s; ${(this.inventoryStatusFilter || 'all') === 'low' ? 'background: #fecaca; font-weight: 600;' : 'background: transparent;'}"><span style="width: 8px; height: 8px; background: #ef4444; border-radius: 50%; display: inline-block;"></span>Sắp hết</span>
+                                    <span class="inventory-filter-chip" data-filter="warning" onclick="app.setInventoryStatusFilter('warning')" style="display: flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 20px; cursor: pointer; transition: all 0.2s; ${(this.inventoryStatusFilter || 'all') === 'warning' ? 'background: #fed7aa; font-weight: 600;' : 'background: transparent;'}"><span style="width: 8px; height: 8px; background: #f59e0b; border-radius: 50%; display: inline-block;"></span>Ít hàng</span>
+                                    <span class="inventory-filter-chip" data-filter="good" onclick="app.setInventoryStatusFilter('good')" style="display: flex; align-items: center; gap: 4px; padding: 4px 10px; border-radius: 20px; cursor: pointer; transition: all 0.2s; ${(this.inventoryStatusFilter || 'all') === 'good' ? 'background: #a7f3d0; font-weight: 600;' : 'background: transparent;'}"><span style="width: 8px; height: 8px; background: #10b981; border-radius: 50%; display: inline-block;"></span>Đủ hàng</span>
                                 </div>
                             </div>
                             
@@ -1772,9 +1832,22 @@
                                     <div>Trạng thái</div>
                                     <div>Thao tác</div>
                                 </div>
-                                ${this.demoData.products.map((product, index) => {
+                                ${(() => {
+                                    const filter = this.inventoryStatusFilter || 'all';
+                                    let filtered = this.demoData.products.filter(product => {
+                                        const stockVal = (product.hasImei && product.imeis) ? (product.stock != null ? product.stock : product.imeis.length) : (product.stock || 0);
+                                        const minVal = (product.hasImei && product.imeis) ? 0 : (product.minStock ?? 1);
+                                        const stockStatus = stockVal === 0 ? 'out' : minVal > 0 && stockVal <= minVal ? 'low' : minVal > 0 && stockVal <= minVal * 1.5 ? 'warning' : 'good';
+                                        if (filter === 'all') return true;
+                                        if (filter === 'low') return stockStatus === 'out' || stockStatus === 'low';
+                                        if (filter === 'warning') return stockStatus === 'warning';
+                                        if (filter === 'good') return stockStatus === 'good';
+                                        return true;
+                                    });
+                                    filtered = [...filtered].reverse(); // Mới nhất trước, giống trang Sản phẩm
+                                    return filtered.map((product, index) => {
                                     const stockVal = (product.hasImei && product.imeis) ? (product.stock != null ? product.stock : product.imeis.length) : (product.stock || 0);
-                                    const minVal = (product.hasImei && product.imeis) ? 0 : (product.minStock ?? 10);
+                                    const minVal = (product.hasImei && product.imeis) ? 0 : (product.minStock ?? 1);
                                     const stockStatus = stockVal === 0 ? 'out' : minVal > 0 && stockVal <= minVal ? 'low' : minVal > 0 && stockVal <= minVal * 1.5 ? 'warning' : 'good';
                                     const statusColor = stockStatus === 'out' ? '#ef4444' : stockStatus === 'low' ? '#ef4444' : stockStatus === 'warning' ? '#f59e0b' : '#10b981';
                                     const statusText = stockStatus === 'out' ? 'Hết hàng' : stockStatus === 'low' ? 'Sắp hết' : stockStatus === 'warning' ? 'Ít hàng' : 'Đủ hàng';
@@ -1804,7 +1877,8 @@
                                             </button>
                                         </div>
                                     `;
-                                }).join('')}
+                                }).join('');
+                                })()}
                             </div>
                         </div>
                     </div>
@@ -1929,7 +2003,7 @@
                         <button type="button" onclick="app.removeFromPOS(${i})" style="flex-shrink: 0; background: transparent; border: none; padding: 4px; cursor: pointer; color: #9ca3af; font-size: 15px;" title="Xóa">🗑️</button>
                         <div style="flex: 1; min-width: 140px; font-weight: 500; word-break: break-word;">${(item.name||'').replace(/</g,'&lt;')}</div>
                         <input type="number" min="1" value="${item.quantity}" onchange="app.updatePOSQty(${i}, this.value)" style="width: 56px; padding: 6px 4px; border: 1px solid #e5e7eb; border-radius: 6px; text-align: center; font-size: 14px; flex-shrink: 0;">
-                        <div style="width: 100px; text-align: right; color: #6b7280; flex-shrink: 0;">${(item.price||0).toLocaleString('vi-VN')}</div>
+                        <input type="text" class="price-input" value="${this.formatPrice(item.price||0)}" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this); app.updatePOSItemPrice(${i}, this.value)" onblur="app.priceInputBlur(this); app.updatePOSItemPrice(${i}, this.value)" data-pos-price-idx="${i}" style="width: 100px; padding: 6px 4px; border: 1px solid #e5e7eb; border-radius: 6px; text-align: right; font-size: 14px; flex-shrink: 0;" inputmode="numeric" placeholder="0" title="Click để sửa đơn giá">
                         <div style="width: 140px; display: flex; gap: 4px; align-items: center; flex-shrink: 0;">
                             <select onchange="app.updatePOSItemDiscountType(${i}, this.value)" style="width: 50px; padding: 6px 2px; border: 1px solid #e5e7eb; border-radius: 6px; font-size: 12px;">
                                 <option value="vnd" ${dt==='vnd'?'selected':''}>VNĐ</option>
@@ -2018,6 +2092,30 @@
                 }
             }
             
+            updatePOSItemPrice(index, val) {
+                const item = this.posCart.items[index];
+                if (!item) return;
+                const newPrice = Math.max(0, this.parsePrice(val) || 0);
+                item.price = newPrice;
+                const rawTotal = (item.quantity || 1) * newPrice;
+                const itemDisc = Math.max(0, parseInt(item.discount, 10) || 0);
+                const itemTotal = Math.max(0, rawTotal - Math.min(itemDisc, rawTotal));
+                const totalEl = document.getElementById('pos-item-total-' + index);
+                if (totalEl) totalEl.textContent = itemTotal.toLocaleString('vi-VN');
+                const s = this.getPOSSummary();
+                const totalGoodsEl = document.getElementById('pos-total-goods');
+                const toPayEl = document.getElementById('pos-to-pay');
+                if (totalGoodsEl) totalGoodsEl.textContent = s.totalGoods.toLocaleString('vi-VN');
+                if (toPayEl) toPayEl.textContent = s.toPay.toLocaleString('vi-VN');
+                this.posCart.amountPaid = s.toPay;
+                const amountPaidInp = document.getElementById('pos-amount-paid');
+                if (amountPaidInp) amountPaidInp.value = this.formatPrice(s.toPay);
+                const mt = document.getElementById('pos-mobile-total');
+                if (mt) mt.textContent = s.toPay.toLocaleString('vi-VN');
+                this.updatePOSDiscountHint();
+                this.updatePOSDebtHint();
+            }
+
             updatePOSItemDiscountType(index, type) {
                 const item = this.posCart.items[index];
                 if (!item) return;
@@ -2117,10 +2215,7 @@
                     listEl.innerHTML = '<div style="padding: 48px 24px; text-align: center; color: #9ca3af; font-size: 15px;"><div style="font-size: 48px; margin-bottom: 16px;">🔍</div><div style="font-weight: 500; color: #6b7280;">Gõ tên, mã hoặc danh mục sản phẩm để tìm kiếm</div><div style="font-size: 13px; margin-top: 12px;">Sản phẩm sẽ hiển thị khi bạn nhập từ khóa</div></div>';
                     return;
                 }
-                let products = (this.demoData.products || []).filter(p =>
-                    (p.name && p.name.toLowerCase().includes(term)) ||
-                    (p.category && p.category.toLowerCase().includes(term))
-                );
+                let products = (this.demoData.products || []).filter(p => this.productMatchesSearchQuery(p, term));
                 if (!products.length) {
                     listEl.innerHTML = '<div style="padding: 24px; text-align: center; color: #6b7280; font-size: 14px;">Không tìm thấy sản phẩm phù hợp</div>';
                     return;
@@ -2154,10 +2249,10 @@
             }
             
             filterPOSCustomer(q) {
-                const term = (q || '').toLowerCase();
+                const term = (q || '').trim();
                 const realCustomers = (this.demoData.customers || []).filter(c => c.id !== 'KH_LE' && !(c.id && c.id.startsWith('KL_')));
                 const customers = realCustomers.filter(c =>
-                    !term || (c.name && c.name.toLowerCase().includes(term)) || (c.phone && c.phone.includes(term))
+                    !term || this.searchMatch(c.name, term) || (c.phone && c.phone.includes(term))
                 );
                 const dd = document.getElementById('pos-customer-dropdown');
                 if (!dd) return;
@@ -2254,8 +2349,7 @@
                     const qty = pr.quantity || 1;
                     if (prod.hasImei && prod.imeis && Array.isArray(prod.imeis)) {
                         const toSell = Math.min(qty, prod.imeis.length);
-                        const soldImeis = prod.imeis.splice(0, toSell);
-                        pr.soldImeis = soldImeis;
+                        pr.soldImeis = prod.imeis.slice(0, toSell);
                     }
                     prod.stock = Math.max(0, (prod.stock ?? (prod.hasImei && prod.imeis ? prod.imeis.length : 0)) - qty);
                 }
@@ -2324,9 +2418,65 @@
                 `;
             }
             
+            // Công nợ thực tế = đơn hàng + sửa chữa (đồng bộ 2 nguồn, dùng amountPaid vs cost thay vì paymentStatus)
+            getActualDebtForCustomer(c) {
+                const orders = (this.demoData.orders || []).filter(o => 
+                    o.customerId === c.id || o.customerName === c.name || o.customerId === c.name || o.customerName === c.id
+                );
+                const orderDebt = orders.reduce((sum, order) => sum + Math.max(0, (order.total || 0) - (order.amountPaid != null ? order.amountPaid : (order.paymentStatus === 'Đã thanh toán' ? order.total : 0))), 0);
+                const repairs = (this.demoData.repairs || []).filter(r => 
+                    (r.status || '') === 'Đã trả' &&
+                    (r.customerId === c.id || r.customerName === c.name || r.customerId === c.name || r.customerName === c.id)
+                );
+                const repairDebt = repairs.reduce((sum, r) => {
+                    const cost = Number(r.repairCost) || 0;
+                    const paid = Number(r.amountPaid) || 0;
+                    return sum + Math.max(0, cost - paid);
+                }, 0);
+                return orderDebt + repairDebt;
+            }
+
+            // Lấy danh sách khách có công nợ: từ danh sách KH + từ đơn/phiếu có nợ nhưng chưa có trong danh sách
+            getCustomersWithDebt() {
+                const list = [];
+                const seen = new Set();
+                const addIfNew = (c) => {
+                    const key = (c.id || '') + '|' + (c.name || '');
+                    if (seen.has(key)) return;
+                    const debt = this.getActualDebtForCustomer(c);
+                    if (debt > 0) {
+                        list.push(c);
+                        seen.add(key);
+                        if (c.id) seen.add(c.id);
+                        if (c.name) seen.add(c.name);
+                    }
+                };
+                (this.demoData.customers || []).forEach(c => addIfNew(c));
+                (this.demoData.orders || []).forEach(o => {
+                    const d = (o.total || 0) - (o.amountPaid != null ? o.amountPaid : (o.paymentStatus === 'Đã thanh toán' ? o.total : 0));
+                    if (d <= 0 || !o.customerId && !o.customerName) return;
+                    const cid = o.customerId || o.customerName;
+                    const cname = o.customerName || o.customerId;
+                    if (cid && cname && (seen.has(cid) || seen.has(cname))) return;
+                    addIfNew({ id: cid || cname, name: cname || cid, phone: '', address: '' });
+                });
+                (this.demoData.repairs || []).forEach(r => {
+                    if ((r.status || '') !== 'Đã trả') return;
+                    const cost = Number(r.repairCost) || 0;
+                    const paid = Number(r.amountPaid) || 0;
+                    if (cost <= 0 || paid >= cost) return;
+                    const cid = r.customerId || r.customerName;
+                    const cname = r.customerName || r.customerId;
+                    if (!cid && !cname) return;
+                    if (seen.has(cid) || seen.has(cname)) return;
+                    addIfNew({ id: cid || cname, name: cname || cid, phone: r.phone || '', address: r.address || '' });
+                });
+                return list;
+            }
+
             getDebtsContent() {
-                const totalCustomerDebt = this.demoData.customers.reduce((sum, customer) => sum + customer.debt, 0);
-                const customersWithDebt = this.demoData.customers.filter(c => c.debt > 0);
+                const customersWithActualDebt = this.getCustomersWithDebt();
+                const totalActualDebt = customersWithActualDebt.reduce((sum, c) => sum + this.getActualDebtForCustomer(c), 0);
                 const todayStr = this.getVietnamTime().toISOString().split('T')[0];
                 const todayPayments = (this.demoData.debtPayments || []).filter(p => p.date === todayStr);
                 const todayCollected = todayPayments.reduce((s, p) => s + (p.amount || 0), 0);
@@ -2340,8 +2490,8 @@
                                     <span class="stat-title">Tổng công nợ</span>
                                     <span class="stat-icon">💳</span>
                                 </div>
-                                <div class="stat-value">${totalCustomerDebt.toLocaleString('vi-VN')} VNĐ</div>
-                                <div class="stat-change negative">${customersWithDebt.length} khách hàng</div>
+                                <div class="stat-value">${totalActualDebt.toLocaleString('vi-VN')} VNĐ</div>
+                                <div class="stat-change negative">${customersWithActualDebt.length} khách hàng (đơn hàng + sửa chữa)</div>
                             </div>
                             
                             <div class="stat-card info">
@@ -2361,27 +2511,42 @@
                                     <div class="action-icon">📞</div>
                                     <div class="action-title">Nhắc nợ</div>
                                 </div>
+                                <div class="action-button" onclick="app.syncCustomerDebt(); app.loadPage('debts');" title="Đồng bộ công nợ từ đơn hàng và sửa chữa">
+                                    <div class="action-icon">🔄</div>
+                                    <div class="action-title">Đồng bộ công nợ</div>
+                                </div>
                             </div>
                             
-                            <h3 style="margin-bottom: 16px; color: var(--text-primary);">Khách hàng có công nợ:</h3>
-                            ${customersWithDebt.map(customer => `
+                            <h3 style="margin-bottom: 16px; color: var(--text-primary);">Khách hàng có công nợ (đơn hàng + sửa chữa):</h3>
+                            ${customersWithActualDebt.length === 0 ? '<p style="color: #6b7280;">Không có khách hàng nào đang nợ.</p>' : ''}
+                            ${customersWithActualDebt.map(customer => {
+                                const actualDebt = this.getActualDebtForCustomer(customer);
+                                return `
                                 <div class="activity-item debt-customer-row">
                                     <div class="activity-icon warning">💳</div>
                                     <div class="activity-content">
                                         <div class="activity-title">${escapeHtml(customer.name)} (${escapeHtml(customer.id)})</div>
-                                        <div class="activity-desc">📞 ${escapeHtml(customer.phone)} | 📍 ${escapeHtml(customer.address)}</div>
+                                        <div class="activity-desc">📞 ${escapeHtml(customer.phone || '-')} | 📍 ${escapeHtml(customer.address || '-')}</div>
                                     </div>
                                     <div class="debt-customer-actions">
-                                        <span class="debt-amount">${customer.debt.toLocaleString('vi-VN')} VNĐ</span>
+                                        <span class="debt-amount">${actualDebt.toLocaleString('vi-VN')} VNĐ</span>
                                         <button ondblclick="app.toggleCustomerDebtStatus('${customer.id}')" class="debt-status-btn" title="Double click để chuyển trạng thái">Công nợ</button>
                                         <button onclick="app.showPaymentFormForCustomer('${customer.id}')" class="debt-pay-btn">Ghi nhận thanh toán</button>
                                         <button onclick="app.showCustomerDebtDetail('${customer.id}')" class="debt-detail-btn">Chi tiết</button>
                                     </div>
                                 </div>
-                            `).join('')}
+                            `}).join('')}
                         </div>
                     </div>
                 `;
+            }
+            syncCustomerDebtFromOrders() { this.syncCustomerDebt(); }
+            syncCustomerDebt() {
+                (this.demoData.customers || []).forEach(c => {
+                    c.debt = this.getActualDebtForCustomer(c);
+                });
+                this.saveToLocalStorage();
+                this.showNotification('Đã đồng bộ công nợ từ đơn hàng và sửa chữa.', 'success');
             }
             
             getOrdersContent() {
@@ -2538,7 +2703,10 @@
                 const repairsTable = repairs.length === 0 ? `
                     <tr><td colspan="9" style="padding: 24px; text-align: center; color: #6b7280;">Chưa có phiếu sửa chữa nào. Nhấn "Thêm phiếu sửa chữa" để tạo mới.</td></tr>
                 ` : repairs.map((r, index) => {
-                    const payStatus = (r.status || '') === 'Đã trả' ? (r.paymentStatus || ((r.amountPaid >= (Number(r.repairCost) || 0)) ? 'Đã thanh toán' : 'Công nợ')) : '-';
+                    const cost = Number(r.repairCost) || 0;
+                    const paid = (Number(r.amountPaid) || 0); // Dùng || để xử lý undefined/NaN → 0
+                    const hasDebt = cost > 0 && paid < cost;
+                    const payStatus = (r.status || '') === 'Đã trả' ? (hasDebt ? 'Công nợ' : 'Đã thanh toán') : '-';
                     const desc = (r.repairDescription || '').replace(/</g, '&lt;');
                     const descShort = desc.length > 35 ? desc.substring(0, 35) + '…' : desc || '-';
                     return `
@@ -2553,7 +2721,7 @@
                             <span style="padding: 3px 6px; border-radius: 6px; font-size: 11px; white-space: nowrap; display: inline-block; background: ${payStatus === 'Đã thanh toán' ? '#dcfce7' : payStatus === 'Công nợ' ? '#fef3c7' : '#f3f4f6'}; color: ${payStatus === 'Đã thanh toán' ? '#166534' : payStatus === 'Công nợ' ? '#b45309' : '#6b7280'};">
                                 ${payStatus}
                             </span>
-                            ${payStatus === 'Công nợ' && (r.status || '') === 'Đã trả' ? `<button onclick="app.markRepairPaid(${index})" style="margin-left: 4px; padding: 2px 6px; background: #16a34a; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 10px;" title="Đánh dấu đã thanh toán">✓ Đã TT</button>` : ''}
+                            ${payStatus === 'Công nợ' && (r.status || '') === 'Đã trả' ? `<span style="margin-left: 4px; font-size: 10px; color: #6b7280;" title="Vào tab Công nợ để ghi nhận thanh toán">→ Tab Công nợ</span>` : ''}
                         </td>
                         <td style="padding: 10px 8px; border-bottom: 1px solid #e5e7eb; text-align: center;">
                             <span style="padding: 3px 6px; border-radius: 6px; font-size: 11px; white-space: nowrap; display: inline-block; background: ${r.status === 'Hoàn thành' ? '#dcfce7' : r.status === 'Đã trả' ? '#e0e7ff' : '#fef3c7'}; color: ${r.status === 'Hoàn thành' ? '#166534' : r.status === 'Đã trả' ? '#3730a3' : '#b45309'};">
@@ -2630,14 +2798,14 @@
             }
 
             searchRepairs(query) {
-                const q = (query || '').toLowerCase().trim();
+                const q = (query || '').trim();
                 const rows = document.querySelectorAll('#repairs-table tbody tr[data-repair-index]');
                 rows.forEach(row => {
                     const idx = parseInt(row.getAttribute('data-repair-index'), 10);
                     const r = this.demoData.repairs[idx];
                     if (!r) return;
-                    const text = ((r.id || '') + ' ' + (r.customerName || '') + ' ' + (r.phone || '') + (r.repairDescription || '')).toLowerCase();
-                    row.style.display = q === '' || text.includes(q) ? '' : 'none';
+                    const text = (r.id || '') + ' ' + (r.customerName || '') + ' ' + (r.phone || '') + (r.repairDescription || '');
+                    row.style.display = q === '' || this.searchMatch(text, q) ? '' : 'none';
                 });
             }
 
@@ -2697,8 +2865,15 @@
                                     <input type="text" class="price-input" name="partsManualCost" value="0" placeholder="Linh kiện không có trong sản phẩm - để tính doanh thu" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
                                 </div>
                                 <div style="margin-top: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Thanh toán:</label>
+                                    <select name="repairPaymentStatus" id="repair-payment-status" onchange="app.toggleRepairAmountPaidField(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                        <option value="Đã thanh toán" selected>Đã thanh toán</option>
+                                        <option value="Công nợ">Công nợ</option>
+                                    </select>
+                                </div>
+                                <div id="repair-amount-paid-wrap" style="margin-top: 16px; display: none;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Khách đã thanh toán (VNĐ):</label>
-                                    <input type="text" class="price-input" name="amountPaid" value="0" placeholder="Số tiền khách đã trả - nếu < Báo giá sẽ là Công nợ" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
+                                    <input type="text" class="price-input" name="amountPaid" value="0" placeholder="Số tiền khách đã trả (còn nợ = Báo giá − số này)" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
                                 </div>
                                 <div style="margin-top: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Linh kiện sửa chữa:</label>
@@ -2783,6 +2958,24 @@
                 document.getElementById('repair-address').value = address;
             }
 
+            toggleRepairAmountPaidField(selectEl) {
+                const wrapId = (selectEl.id === 'repair-edit-payment-status') ? 'repair-edit-amount-paid-wrap' : 'repair-amount-paid-wrap';
+                const wrap = document.getElementById(wrapId);
+                if (!wrap) return;
+                wrap.style.display = (selectEl.value === 'Công nợ') ? 'block' : 'none';
+                // Khi chuyển sang Công nợ trong form sửa: nếu đang hiển thị "đã trả đủ" (paid >= cost) thì reset về 0 để dễ sửa phiếu bị migration sai
+                if (selectEl.value === 'Công nợ' && wrapId === 'repair-edit-amount-paid-wrap') {
+                    const form = selectEl.closest('form');
+                    const costInp = form && form.querySelector('input[name="repairCost"]');
+                    const paidInp = wrap.querySelector('input[name="amountPaid"]');
+                    if (costInp && paidInp) {
+                        const cost = this.parsePrice(costInp.value);
+                        const paid = this.parsePrice(paidInp.value);
+                        if (cost > 0 && paid >= cost) paidInp.value = '0';
+                    }
+                }
+            }
+
             getRepairPartProducts(categoryFilter) {
                 const list = this.demoData.products || [];
                 if (!categoryFilter) return list;
@@ -2802,7 +2995,7 @@
                 const options = dropdown.querySelectorAll('.dropdown-option');
                 options.forEach(opt => {
                     const catMatch = !cat || (opt.getAttribute('data-category') || '').toLowerCase().includes(cat.toLowerCase());
-                    const textMatch = !q || (opt.textContent || '').toLowerCase().includes(q);
+                    const textMatch = !q || this.searchMatch(opt.textContent || '', q);
                     opt.style.display = catMatch && textMatch ? 'block' : 'none';
                 });
             }
@@ -2826,7 +3019,7 @@
                 const q = (query || '').toLowerCase().trim();
                 Array.from(select.options).forEach(opt => {
                     if (opt.value === '') { opt.style.display = ''; return; }
-                    opt.style.display = !q || (opt.textContent || '').toLowerCase().includes(q) ? '' : 'none';
+                    opt.style.display = !q || this.searchMatch(opt.textContent || '', q) ? '' : 'none';
                 });
             }
 
@@ -2918,8 +3111,9 @@
 
                 const repairCost = this.parsePrice(formData.get('repairCost'));
                 const partsManualCost = this.parsePrice(formData.get('partsManualCost'));
-                const amountPaid = Math.max(0, this.parsePrice(formData.get('amountPaid')) || 0);
-                const paymentStatus = amountPaid >= repairCost ? 'Đã thanh toán' : 'Công nợ';
+                const paymentStatusSelect = formData.get('repairPaymentStatus') || 'Đã thanh toán';
+                const amountPaid = paymentStatusSelect === 'Đã thanh toán' ? repairCost : Math.max(0, this.parsePrice(formData.get('amountPaid')) || 0);
+                const paymentStatus = paymentStatusSelect;
                 const productsData = this.demoData.products || [];
                 const neededByProduct = {};
                 parts.forEach(p => { if (p.productId) neededByProduct[p.productId] = (neededByProduct[p.productId] || 0) + (p.quantity || 0); });
@@ -3094,7 +3288,8 @@
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this && window._modalMousedownTarget===this) closeModal(this)">
                         <div style="background: white; padding: 32px; border-radius: 12px; width: 700px; max-width: 95vw; max-height: 90vh; overflow-y: auto;" onclick="event.stopPropagation()">
                             <h3 style="margin-bottom: 24px; color: var(--text-primary);">Sửa phiếu ${r.id}</h3>
-                            <form onsubmit="app.updateRepair(event, ${index})">
+                            <form onsubmit="app.updateRepair(event, ${index})" id="repair-edit-form-${index}">
+                                <input type="hidden" name="andPrint" value="">
                                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
                                     <div>
                                         <label style="display: block; margin-bottom: 8px; font-weight: 600;">Khách hàng:</label>
@@ -3141,15 +3336,16 @@
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Giá linh kiện (VNĐ):</label>
                                     <input type="text" class="price-input" name="partsManualCost" value="${this.formatPrice(Number(r.partsManualCost) || 0)}" placeholder="Linh kiện không có trong sản phẩm - để tính doanh thu" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
                                 </div>
-                                <div style="margin-top: 16px; display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
-                                    <div>
-                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Khách cần trả (VNĐ):</label>
-                                        <div style="padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px; background: #f8fafc; font-weight: 600;">${(Number(r.repairCost) || 0).toLocaleString('vi-VN')}</div>
-                                    </div>
-                                    <div>
-                                        <label style="display: block; margin-bottom: 8px; font-weight: 600;">Khách đã thanh toán (VNĐ):</label>
-                                        <input type="text" class="price-input" name="amountPaid" value="${this.formatPrice(Number(r.amountPaid) ?? (r.paymentStatus === 'Công nợ' ? 0 : Number(r.repairCost) || 0))}" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
-                                    </div>
+                                <div style="margin-top: 16px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Thanh toán:</label>
+                                    <select name="repairPaymentStatus" id="repair-edit-payment-status" onchange="app.toggleRepairAmountPaidField(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;">
+                                        <option value="Đã thanh toán" ${(r.paymentStatus || '') !== 'Công nợ' ? 'selected' : ''}>Đã thanh toán</option>
+                                        <option value="Công nợ" ${(r.paymentStatus || '') === 'Công nợ' ? 'selected' : ''}>Công nợ</option>
+                                    </select>
+                                </div>
+                                <div id="repair-edit-amount-paid-wrap" style="margin-top: 16px; display: ${(r.paymentStatus || '') === 'Công nợ' ? 'block' : 'none'};">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">Khách đã thanh toán (VNĐ):</label>
+                                    <input type="text" class="price-input" name="amountPaid" value="${this.formatPrice(Number(r.amountPaid) ?? 0)}" placeholder="Số tiền khách đã trả (còn nợ = Báo giá − số này)" onfocus="app.priceInputFocus(this)" oninput="app.priceInputInput(this)" onblur="app.priceInputBlur(this)" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" inputmode="numeric">
                                 </div>
                                 <div style="margin-top: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Linh kiện sửa chữa:</label>
@@ -3194,6 +3390,7 @@
                                 </div>
                                 <div style="display: flex; gap: 12px; justify-content: flex-end; margin-top: 24px;">
                                     <button type="button" onclick="closeModal(this.closest('div[style*=fixed]'))" style="padding: 12px 24px; border: 2px solid #e5e7eb; background: white; border-radius: 8px; cursor: pointer;">Hủy</button>
+                                    <button type="button" onclick="var f=this.closest('form'); var h=f.querySelector('input[name=andPrint]'); if(!h){h=document.createElement('input');h.type='hidden';h.name='andPrint';f.appendChild(h);} h.value='1'; f.requestSubmit();" style="padding: 12px 24px; background: var(--primary-green); color: white; border: none; border-radius: 8px; cursor: pointer;">Cập nhật và In</button>
                                     <button type="submit" style="padding: 12px 24px; background: var(--primary-blue); color: white; border: none; border-radius: 8px; cursor: pointer;">Cập nhật</button>
                                 </div>
                             </form>
@@ -3336,8 +3533,9 @@
                 r.password = formData.get('password') || '';
                 r.repairCost = repairCost;
                 r.partsManualCost = this.parsePrice(formData.get('partsManualCost'));
-                const amountPaid = Math.max(0, this.parsePrice(formData.get('amountPaid')) || 0);
-                const paymentStatus = amountPaid >= repairCost ? 'Đã thanh toán' : 'Công nợ';
+                const paymentStatusSelect = formData.get('repairPaymentStatus') || 'Đã thanh toán';
+                const amountPaid = paymentStatusSelect === 'Đã thanh toán' ? repairCost : Math.max(0, this.parsePrice(formData.get('amountPaid')) || 0);
+                const paymentStatus = paymentStatusSelect;
                 const oldRepairDebt = (r.status === 'Đã trả' && r.paymentStatus === 'Công nợ') ? Math.max(0, (Number(r.repairCost) || 0) - (Number(r.amountPaid) ?? 0)) : 0;
                 const newRepairDebt = (formData.get('status') === 'Đã trả' && paymentStatus === 'Công nợ') ? Math.max(0, repairCost - amountPaid) : 0;
                 const oldCustId = r.customerId;
@@ -3358,22 +3556,31 @@
                 r.notes = formData.get('notes') || '';
                 this.saveToLocalStorage();
                 this.showNotification('Đã cập nhật phiếu ' + r.id, 'success');
+                const andPrint = formData.get('andPrint') === '1';
+                if (andPrint) this.printRepair(index);
                 this.loadPage('repairs');
                 const modal = form.closest('div[style*="fixed"]'); if (modal) modal.remove();
+            }
+
+            updateRepairAndPrint(button, index) {
+                const form = button.closest('form');
+                if (!form) return;
+                let inp = form.querySelector('input[name="andPrint"]');
+                if (!inp) { inp = document.createElement('input'); inp.type = 'hidden'; inp.name = 'andPrint'; form.appendChild(inp); }
+                inp.value = '1';
+                form.requestSubmit();
             }
 
             markRepairPaid(index) {
                 const r = this.demoData.repairs[index];
                 if (!r) return;
                 const cost = Number(r.repairCost) || 0;
-                const oldDebt = (r.status === 'Đã trả' && r.paymentStatus === 'Công nợ' && r.customerId) ? Math.max(0, cost - (Number(r.amountPaid) ?? 0)) : 0;
+                const paid = Number(r.amountPaid) || 0;
+                const hasDebt = (r.status || '') === 'Đã trả' && cost > 0 && paid < cost;
                 r.amountPaid = cost;
                 r.paymentStatus = 'Đã thanh toán';
-                if (oldDebt > 0 && r.customerId) {
-                    const cust = this.demoData.customers.find(c => c.id === r.customerId);
-                    if (cust) cust.debt = Math.max(0, (cust.debt || 0) - oldDebt);
-                }
                 this.saveToLocalStorage();
+                if (hasDebt) this.syncCustomerDebt(); // Đồng bộ phần Công nợ
                 this.showNotification(`Đã đánh dấu phiếu ${r.id || ''} thanh toán xong`, 'success');
                 this.loadPage('repairs');
             }
@@ -3382,12 +3589,12 @@
                 const r = this.demoData.repairs[index];
                 if (!r) return;
                 if (confirm('Bạn có chắc muốn xóa phiếu sửa chữa ' + (r.id || 'này') + '?')) {
-                    if (r.status === 'Đã trả' && r.paymentStatus === 'Công nợ' && r.customerId) {
-                        const repairDebt = Math.max(0, (Number(r.repairCost) || 0) - (Number(r.amountPaid) ?? 0));
-                        if (repairDebt > 0) {
-                            const cust = this.demoData.customers.find(c => c.id === r.customerId);
-                            if (cust) cust.debt = Math.max(0, (cust.debt || 0) - repairDebt);
-                        }
+                    const cost = Number(r.repairCost) || 0;
+                    const paid = Number(r.amountPaid) || 0;
+                    const repairDebt = (r.status || '') === 'Đã trả' && cost > 0 && paid < cost ? Math.max(0, cost - paid) : 0;
+                    if (repairDebt > 0) {
+                        const cust = this.demoData.customers.find(c => c.id === r.customerId || c.name === r.customerName);
+                        if (cust) cust.debt = Math.max(0, (cust.debt || 0) - repairDebt);
                     }
                     (r.parts || []).forEach(p => {
                         if (!p.productId) return;
@@ -3412,6 +3619,9 @@
                 }
                 const repairId = r.id || 'SC' + String(index + 1).padStart(4, '0');
                 const repairCost = Number(r.repairCost) || 0;
+                const paymentStatus = (r.paymentStatus || '').trim();
+                const amountPaid = Number(r.amountPaid) ?? 0;
+                const debtAmount = (r.status || '') === 'Đã trả' && paymentStatus === 'Công nợ' ? Math.max(0, repairCost - amountPaid) : 0;
                 const companySettings = this.getCompanySettings();
                 if (window.companyAssets && window.companyAssets.logo) companySettings.logo = window.companyAssets.logo;
 
@@ -3503,6 +3713,8 @@
                             ${r.password ? '<div class="info-row" style="margin-bottom: 2px;"><span class="info-label">Mật khẩu:</span><span class="info-value">&nbsp;' + (r.password || '').replace(/</g, '&lt;') + '</span></div>' : ''}
                             <div class="totals-section">
                                 ${repairCost > 0 ? `<div class="total-row"><span>Báo giá (VNĐ):</span><span>${repairCost.toLocaleString('vi-VN')} đ</span></div>` : ''}
+                                ${(r.status || '') === 'Đã trả' ? `<div class="total-row"><span>Thanh toán:</span><span style="font-weight: 600; color: ${paymentStatus === 'Công nợ' ? '#b45309' : '#166534'};">${(paymentStatus || 'Đã thanh toán').replace(/</g, '&lt;')}</span></div>` : ''}
+                                ${debtAmount > 0 ? `<div class="total-row"><span>Đã trả:</span><span>${amountPaid.toLocaleString('vi-VN')} đ</span></div><div class="total-row" style="color: #dc2626; font-weight: 600;"><span>Còn nợ:</span><span>${debtAmount.toLocaleString('vi-VN')} đ</span></div>` : ''}
                                 <div class="total-row final"><span>TỔNG CỘNG:</span><span>${repairCost.toLocaleString('vi-VN')} đ</span></div>
                             </div>
                             ${r.notes ? '<div class="section-title">Ghi chú</div><div class="repair-desc">' + (r.notes || '').replace(/</g, '&lt;').replace(/\n/g, '<br>') + '</div>' : ''}
@@ -3527,6 +3739,7 @@
             }
 
             // Tính lợi nhuận thực theo giá vốn từng sản phẩm. Tính cho tất cả đơn (cả Công nợ và Đã TT) – đòi được hay không là việc của chủ cửa hàng.
+            // Trừ cả giảm giá theo sản phẩm (item) VÀ giảm giá cấp đơn hàng (order.discount - bên mục Khách hàng).
             calcOrderProfit(order) {
                 if (!order.products || !order.products.length) return 0;
                 let profit = 0;
@@ -3544,9 +3757,12 @@
                     const discountAmount = isVnd ? Math.min(discountVal, beforeDiscount) : (beforeDiscount * discountVal / 100);
                     const revenue = Math.max(0, beforeDiscount - discountAmount);
                     const cost = qty * importPrice;
-                    if (importPrice > 0) profit += revenue - cost;
+                    profit += revenue - cost; // Lợi nhuận = Doanh thu - Giá gốc (luôn trừ cost, kể cả khi cost=0)
                 });
-                return profit;
+                // Trừ giảm giá cấp đơn hàng (bên mục Khách hàng) - giảm giá này làm giảm doanh thu thực tế
+                const orderDiscount = Math.max(0, Number(order.discount) || 0);
+                // Cho phép âm khi giảm giá đến 0: lỗ = giá gốc hàng (phải trừ vào doanh thu/lợi nhuận)
+                return profit - orderDiscount;
             }
 
             calcRepairProfit(repair) {
@@ -3729,7 +3945,9 @@
                                     <tbody id="reports-repairs-list">
                                         ${filteredRepairs.map(r => {
                                             const rev = (r.status || '') === 'Đã trả' ? (Number(r.repairCost) || 0) : 0;
-                                            const payStatus = (r.status || '') === 'Đã trả' ? (r.paymentStatus || ((r.amountPaid >= (Number(r.repairCost) || 0)) ? 'Đã thanh toán' : 'Công nợ')) : '-';
+                                            const cost = Number(r.repairCost) || 0;
+                                            const paid = Number(r.amountPaid) || 0;
+                                            const payStatus = (r.status || '') === 'Đã trả' ? (cost > 0 && paid < cost ? 'Công nợ' : 'Đã thanh toán') : '-';
                                             return `<tr style="border-bottom: 1px solid #e5e7eb;">
                                                 <td style="padding: 12px;">${(r.id || '').replace(/</g, '&lt;')}</td>
                                                 <td style="padding: 12px;">${(r.customerName || '-').replace(/</g, '&lt;')}</td>
@@ -5586,12 +5804,13 @@
                     return;
                 }
                 
+                const q = query.trim();
                 const filteredCustomers = this.demoData.customers.filter(customer => 
-                    customer.name.toLowerCase().includes(query.toLowerCase()) ||
-                    customer.phone.includes(query) ||
-                    customer.email.toLowerCase().includes(query.toLowerCase()) ||
-                    (customer.companyName && customer.companyName.toLowerCase().includes(query.toLowerCase())) ||
-                    (customer.department && customer.department.toLowerCase().includes(query.toLowerCase())) ||
+                    this.searchMatch(customer.name, q) ||
+                    (customer.phone && customer.phone.includes(query)) ||
+                    this.searchMatch(customer.email, q) ||
+                    this.searchMatch(customer.companyName, q) ||
+                    this.searchMatch(customer.department, q) ||
                     (customer.taxCode && customer.taxCode.includes(query))
                 );
                 
@@ -5637,12 +5856,7 @@
                 const term = (query || '').trim().toLowerCase();
                 let products = this.demoData.products || [];
 
-                if (term) {
-                    products = products.filter(product =>
-                        (product.name && product.name.toLowerCase().includes(term)) ||
-                        (product.category && product.category.toLowerCase().includes(term))
-                    );
-                }
+                if (term) products = products.filter(product => this.productMatchesSearchQuery(product, term));
 
                 if (!products.length) {
                     container.innerHTML = '<div style="padding: 16px; text-align: center; color: #6b7280; font-size: 13px;">Không tìm thấy sản phẩm phù hợp</div>';
@@ -5651,7 +5865,7 @@
 
                 const rows = products.slice(0, 50).map(product => {
                     const stockVal = (product.hasImei && product.imeis) ? (product.stock != null ? product.stock : product.imeis.length) : (product.stock || 0);
-                    const minVal = (product.hasImei && product.imeis) ? 0 : (product.minStock ?? 10);
+                    const minVal = (product.hasImei && product.imeis) ? 0 : (product.minStock ?? 1);
                     const stockStatus = stockVal === 0 ? 'danger' : (minVal > 0 && stockVal < minVal) ? 'warning' : 'success';
                     const actionColor = stockStatus === 'danger' ? '#ef4444' : stockStatus === 'warning' ? '#f59e0b' : '#10b981';
 
@@ -6679,7 +6893,7 @@
                 const supplierOptions = this.demoData.suppliers.map(s => 
                     `<option value="${s.id}">${s.name}</option>`
                 ).join('');
-                const minStockVal = (prefill && prefill.minStock !== undefined && prefill.minStock !== null) ? prefill.minStock : 10;
+                const minStockVal = (prefill && prefill.minStock !== undefined && prefill.minStock !== null) ? prefill.minStock : 1;
                 const stockVal = (prefill && prefill.stock !== undefined && prefill.stock !== null) ? prefill.stock : '';
                 const importPriceVal = (prefill && prefill.importPrice != null) ? this.formatPrice(prefill.importPrice) : '';
                 const priceVal = (prefill && prefill.price != null) ? this.formatPrice(prefill.price) : '';
@@ -6850,7 +7064,7 @@
                     importPrice: this.parsePrice(formData.get('importPrice')),
                     price: this.parsePrice(formData.get('price')),
                     stock: hasImei ? imeis.length : parseInt(formData.get('stock') || '0'),
-                    minStock: hasImei ? 0 : (() => { const m = parseInt(formData.get('minStock'), 10); return isNaN(m) ? 10 : Math.max(0, m); })(),
+                    minStock: hasImei ? 0 : (() => { const m = parseInt(formData.get('minStock'), 10); return isNaN(m) ? 1 : Math.max(0, m); })(),
                     supplier: formData.get('supplier'),
                     hasImei,
                     imeis: hasImei ? imeis : []
@@ -6925,7 +7139,7 @@
                 const supplierOptions = this.demoData.suppliers.map(s => 
                     `<option value="${s.id}" ${s.id === product.supplier ? 'selected' : ''}>${s.name}</option>`
                 ).join('');
-                const imeiText = (product.imeis || [])[0] || '';
+                const imeiText = (product.imeis && product.imeis[0]) ? product.imeis[0] : (product.imei || '');
                 
                 const formHTML = `
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this && window._modalMousedownTarget===this) closeModal(this)">
@@ -6958,8 +7172,8 @@
                                     </select>
                                 </div>
                                 <div data-stock-mode="imei" style="margin-bottom: 16px; ${product.hasImei ? '' : 'display: none;'}">
-                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">IMEI</label>
-                                    <input type="text" name="imeis" value="${(imeiText || '').replace(/"/g, '&quot;')}" placeholder="Số IMEI thiết bị" style="width: 100%; padding: 10px 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 13px;">
+                                    <label style="display: block; margin-bottom: 8px; font-weight: 600;">IMEI (mỗi máy 1 số, dùng để quản lý hàng hóa)</label>
+                                    <input type="text" name="imeis" value="${escapeHtml(imeiText || '')}" placeholder="Số IMEI thiết bị" style="width: 100%; padding: 10px 12px; border: 2px solid #e5e7eb; border-radius: 8px; font-size: 13px;">
                                 </div>
                                 <div style="margin-bottom: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Giá nhập:</label>
@@ -6976,7 +7190,7 @@
                                     </div>
                                     <div>
                                         <label style="display: block; margin-bottom: 8px; font-weight: 600;">🔔 Tồn kho tối thiểu:</label>
-                                        <input type="number" name="minStock" value="${product.minStock || 10}" required min="0" style="width: 100%; padding: 12px; border: 2px solid #f59e0b; border-radius: 8px;" placeholder="Cảnh báo khi dưới...">
+                                        <input type="number" name="minStock" value="${product.minStock || 1}" required min="0" style="width: 100%; padding: 12px; border: 2px solid #f59e0b; border-radius: 8px;" placeholder="Cảnh báo khi dưới...">
                                     </div>
                                 </div>
                                 <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
@@ -7012,32 +7226,28 @@
                 const formData = new FormData(form);
 
                 // Xử lý IMEI (nếu có)
-                const imeiRaw = (formData.get('imeis') || '').toString();
-                const imeis = imeiRaw
-                    .split(/[\n,;]+/)
-                    .map(v => v.trim())
-                    .filter(v => v.length > 0);
-                const stockModeImei = !!formData.get('stockModeImei');
-                const hasImei = stockModeImei && imeis.length > 0;
-                
                 const productIndex = this.demoData.products.findIndex(p => p.id === productId);
                 if (productIndex === -1) {
                     this.showNotification('Không tìm thấy sản phẩm', 'error');
                     return;
                 }
+                const existingProduct = this.demoData.products[productIndex];
+                const imeiRaw = (formData.get('imeis') || '').toString().trim();
+                const stockModeImei = !!formData.get('stockModeImei');
+                const existingImeis = (existingProduct.imeis && Array.isArray(existingProduct.imeis)) ? [...existingProduct.imeis] : (existingProduct.imei ? [existingProduct.imei] : []);
+                const imeis = imeiRaw.length > 0 ? [imeiRaw] : existingImeis;
                 
-                // Cập nhật thông tin sản phẩm (IMEI → minStock = 0, mỗi máy 1 IMEI không cần cảnh báo)
                 this.demoData.products[productIndex] = {
                     ...this.demoData.products[productIndex],
                     name: formData.get('name'),
                     category: formData.get('category'),
                     importPrice: this.parsePrice(formData.get('importPrice')),
                     price: this.parsePrice(formData.get('price')),
-                    stock: hasImei ? imeis.length : parseInt(formData.get('stock') || '0'),
-                    minStock: hasImei ? 0 : (() => { const m = parseInt(formData.get('minStock'), 10); return isNaN(m) ? 10 : Math.max(0, m); })(),
+                    stock: stockModeImei ? imeis.length : parseInt(formData.get('stock') || '0'),
+                    minStock: stockModeImei ? 0 : (() => { const m = parseInt(formData.get('minStock'), 10); return isNaN(m) ? 1 : Math.max(0, m); })(),
                     supplier: formData.get('supplier'),
-                    hasImei,
-                    imeis: hasImei ? imeis : []
+                    hasImei: stockModeImei,
+                    imeis: imeis
                 };
                 
                 this.saveToLocalStorage();
@@ -7824,6 +8034,15 @@
                 this.loadPage('categories');
             }
 
+            productMatchesSearchQuery(p, q) {
+                if (!q || !(q = q.trim().toLowerCase())) return true;
+                const words = q.split(/\s+/).filter(w => w.length > 0);
+                if (words.length === 0) return true;
+                const name = (p.name || '');
+                const cat = (p.category || '');
+                const id = (p.id || '');
+                return words.every(word => this.searchMatch(name, word) || this.searchMatch(cat, word) || this.searchMatch(id, word));
+            }
             productMatchesCategoryFilter(p, catFilter) {
                 const pc = (p.category || '').trim();
                 const cf = (catFilter || '').trim();
@@ -8049,7 +8268,7 @@
                                 <div style="background: #f0f9ff; padding: 16px; border-radius: 8px;">
                                     <h4 style="color: var(--primary-blue); margin-bottom: 8px;">Tồn kho & Giá</h4>
                                     <p><strong>Số lượng tồn:</strong> <span style="color: ${effectiveStock === 0 ? '#dc2626' : '#16a34a'}">${isImei ? effectiveStock + ' (theo IMEI)' : effectiveStock} ${effectiveStock === 0 ? '⚠️' : '✅'}</span></p>
-                                    <p><strong>Tối thiểu:</strong> <span style="color: #6b7280">${isImei ? '0 (IMEI)' : (product.minStock ?? 10)}</span> ${!isImei && effectiveStock <= (product.minStock ?? 10) ? '<span style="color: #dc2626; font-size: 12px;">(Dưới ngưỡng!)</span>' : ''}</p>
+                                    <p><strong>Tối thiểu:</strong> <span style="color: #6b7280">${isImei ? '0 (IMEI)' : (product.minStock ?? 1)}</span> ${!isImei && effectiveStock <= (product.minStock ?? 1) ? '<span style="color: #dc2626; font-size: 12px;">(Dưới ngưỡng!)</span>' : ''}</p>
                                     <p><strong>Giá nhập:</strong> ${product.importPrice?.toLocaleString('vi-VN') || 'N/A'} VNĐ</p>
                                     <p><strong>Giá bán:</strong> ${product.price.toLocaleString('vi-VN')} VNĐ</p>
                                     ${profit > 0 ? `<p><strong>Lợi nhuận/SP:</strong> <span style="color: #16a34a">${profit.toLocaleString('vi-VN')} VNĐ (${profitPercent}%)</span></p>` : ''}
@@ -8155,35 +8374,39 @@
                 console.log('Customer ID:', customerId);
                 console.log('Amount:', amount);
                 
-                const customer = this.demoData.customers.find(c => c.id === customerId);
+                let customer = this.demoData.customers.find(c => c.id === customerId);
+                if (!customer) customer = this.getCustomersWithDebt().find(c => c.id === customerId);
                 if (customer && amount > 0) {
-                    const oldDebt = customer.debt;
+                    this.syncCustomerDebt();
+                    const oldDebt = this.getActualDebtForCustomer(customer);
                     const todayStr = this.getVietnamTime().toISOString().split('T')[0];
                     (this.demoData.debtPayments || []).push({ customerId, customerName: customer.name, amount, date: todayStr });
-                    customer.debt = Math.max(0, customer.debt - amount);
+                    customer.debt = Math.max(0, oldDebt - amount);
                     console.log(`🟢 AFTER: ${customer.name} nợ ${customer.debt.toLocaleString('vi-VN')} VNĐ`);
                     
-                    // Lưu và đồng bộ dữ liệu ngay lập tức
                     this.saveToLocalStorage();
-                    console.log('💾 Data saved to Firebase');
                     const savedCustomer = this.demoData.customers.find(c => c.id === customerId);
                     if (savedCustomer) console.log(`✅ Đã cập nhật: ${savedCustomer.name} nợ ${savedCustomer.debt.toLocaleString('vi-VN')} VNĐ`);
                     
-                    // ĐỒNG BỘ 2 CHIỀU: Nếu khách hàng đã trả hết nợ, cập nhật tất cả đơn hàng thành "Đã thanh toán"
                     let syncMessage = '';
                     if (customer.debt === 0) {
                         const unpaidOrders = this.demoData.orders.filter(order => 
-                            order.customerId === customerId && 
+                            (order.customerId === customerId || order.customerName === customer.name) && 
                             (order.paymentStatus === 'Công nợ')
                         );
-                        
-                        if (unpaidOrders.length > 0) {
-                            unpaidOrders.forEach(order => {
-                                order.paymentStatus = 'Đã thanh toán';
-                                console.log(`🔄 Đồng bộ: Đơn hàng ${order.id} → Đã thanh toán (do đã trả hết nợ)`);
-                            });
-                            syncMessage = ` và cập nhật ${unpaidOrders.length} đơn hàng thành "Đã thanh toán"`;
-                        }
+                        unpaidOrders.forEach(order => { order.paymentStatus = 'Đã thanh toán'; });
+                        const unpaidRepairs = (this.demoData.repairs || []).filter(r => {
+                            if ((r.status || '') !== 'Đã trả') return false;
+                            const cost = Number(r.repairCost) || 0;
+                            const paid = Number(r.amountPaid) || 0;
+                            if (cost <= 0 || paid >= cost) return false;
+                            return r.customerId === customerId || r.customerName === customer.name;
+                        });
+                        unpaidRepairs.forEach(r => { r.amountPaid = Number(r.repairCost) || 0; r.paymentStatus = 'Đã thanh toán'; });
+                        const parts = [];
+                        if (unpaidOrders.length > 0) parts.push(`${unpaidOrders.length} đơn hàng`);
+                        if (unpaidRepairs.length > 0) parts.push(`${unpaidRepairs.length} phiếu sửa chữa`);
+                        if (parts.length > 0) syncMessage = ` và cập nhật ${parts.join(', ')} thành "Đã thanh toán"`;
                     }
                     
                     // FORCE reload toàn bộ ứng dụng để đảm bảo đồng bộ
@@ -8202,12 +8425,13 @@
             
             // Hiển thị form thanh toán với khách hàng được chọn sẵn
             showPaymentFormForCustomer(customerId) {
-                const customer = this.demoData.customers.find(c => c.id === customerId);
+                let customer = this.demoData.customers.find(c => c.id === customerId);
+                if (!customer) customer = this.getCustomersWithDebt().find(c => c.id === customerId);
                 if (!customer) {
                     this.showNotification('Không tìm thấy khách hàng', 'error');
                     return;
                 }
-                
+                const actualDebt = this.getActualDebtForCustomer(customer);
                 const formHTML = `
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this && window._modalMousedownTarget===this) closeModal(this)">
                         <div style="background: white; padding: 32px; border-radius: 12px; width: 500px; max-width: 90vw;" onclick="event.stopPropagation()">
@@ -8220,11 +8444,11 @@
                                 </div>
                                 <div style="margin-bottom: 16px;">
                                     <label style="display: block; margin-bottom: 8px; font-weight: 600;">Số tiền thanh toán:</label>
-                                    <input type="number" name="amount" required min="0" max="${customer.debt}" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" placeholder="Tối đa: ${customer.debt.toLocaleString('vi-VN')} VNĐ">
+                                    <input type="number" name="amount" required min="0" max="${actualDebt}" style="width: 100%; padding: 12px; border: 2px solid #e5e7eb; border-radius: 8px;" placeholder="Tối đa: ${actualDebt.toLocaleString('vi-VN')} VNĐ">
                                 </div>
                                 <div style="margin-bottom: 24px;">
                                     <div style="padding: 12px; background: #fef3c7; border-radius: 8px; color: #92400e;">
-                                        <strong>Tổng nợ hiện tại: ${customer.debt.toLocaleString('vi-VN')} VNĐ</strong>
+                                        <strong>Tổng nợ hiện tại: ${actualDebt.toLocaleString('vi-VN')} VNĐ</strong> (đơn hàng + sửa chữa)
                                     </div>
                                 </div>
                                 <div style="display: flex; gap: 12px; justify-content: flex-end;">
@@ -8300,7 +8524,7 @@
                 return items;
             }
             
-            // Hiển thị chi tiết đơn hàng
+            // Hiển thị chi tiết đơn hàng (dùng order.products - sản phẩm thực trong kho, KHÔNG sinh dữ liệu giả)
             showOrderDetail(orderId) {
                 const order = this.demoData.orders.find(o => o.id === orderId);
                 if (!order) {
@@ -8310,36 +8534,35 @@
                 
                 let customer = this.demoData.customers.find(c => c.id === order.customerId);
                 
-                // Debug log để kiểm tra
-                console.log('Order customer ID:', order.customerId);
-                console.log('Found customer:', customer);
-                
-                // Tạo dữ liệu sản phẩm demo dựa trên đơn hàng (vì dữ liệu thực không có items)
-                let orderItems = order.items;
-                if (!orderItems || orderItems.length === 0) {
-                    // Tạo dữ liệu demo dựa trên tổng tiền
-                    orderItems = this.generateOrderItemsFromTotal(order.total);
-                }
-                
-                const orderItemsHTML = orderItems && orderItems.length > 0 ? 
-                    orderItems.map(item => {
-                        const product = this.demoData.products.find(p => p.id === item.productId);
-                        const productName = product ? product.name : item.name || item.productName || 'Sản phẩm không xác định';
-                        
+                // Dùng order.products (sản phẩm thực từ kho) - KHÔNG dùng order.items hay generateOrderItemsFromTotal (sản phẩm giả không có trong kho)
+                const orderProducts = order.products || [];
+                const orderItemsHTML = orderProducts.length > 0 ? 
+                    orderProducts.map(op => {
+                        const prod = this.demoData.products.find(p => p.id === (op.id || op.productId));
+                        const productName = op.name || op.productName || (prod ? prod.name : '-');
+                        const productId = op.id || op.productId || (prod ? prod.id : '-');
+                        const category = prod ? prod.category : '';
+                        const price = op.price != null && !isNaN(op.price) ? op.price : (prod ? prod.price : 0);
+                        const qty = op.quantity || 1;
+                        const subtotal = price * qty;
+                        const soldImeis = op.soldImeis && Array.isArray(op.soldImeis) ? op.soldImeis : [];
+                        const imeiHtml = soldImeis.length > 0 ? `<div style="font-size: 12px; color: #1d4ed8; margin-top: 4px;">IMEI: ${soldImeis.map(i => escapeHtml(i)).join(', ')}</div>` : '';
                         return `
                             <tr style="border-bottom: 1px solid #e5e7eb;">
                                 <td style="padding: 12px; text-align: left;">
-                                    <div style="font-weight: 600;">${productName}</div>
+                                    <div style="font-weight: 600;">${escapeHtml(productName)}</div>
+                                    <div style="font-size: 12px; color: #6b7280;">Mã SP: ${escapeHtml(productId)}${category ? ' · ' + escapeHtml(category) : ''}</div>
+                                    ${imeiHtml}
                                 </td>
-                                <td style="padding: 12px; text-align: center; font-weight: 600;">${item.quantity}</td>
-                                <td style="padding: 12px; text-align: right;">${item.price.toLocaleString('vi-VN')} VNĐ</td>
+                                <td style="padding: 12px; text-align: center; font-weight: 600;">${qty}</td>
+                                <td style="padding: 12px; text-align: right;">${price.toLocaleString('vi-VN')} VNĐ</td>
                                 <td style="padding: 12px; text-align: right; font-weight: 600; color: #dc2626;">
-                                    ${(item.quantity * item.price).toLocaleString('vi-VN')} VNĐ
+                                    ${subtotal.toLocaleString('vi-VN')} VNĐ
                                 </td>
                             </tr>
                         `;
                     }).join('') :
-                    '<tr><td colspan="4" style="padding: 20px; text-align: center; color: #6b7280;">Không có sản phẩm</td></tr>';
+                    '<tr><td colspan="4" style="padding: 20px; text-align: center; color: #6b7280;">Không có sản phẩm trong đơn</td></tr>';
                 
                 const orderDetailHTML = `
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1002; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this && window._modalMousedownTarget===this) closeModal(this)">
@@ -8358,12 +8581,14 @@
                                     </div>
                                     <div>
                                         <div style="color: #6b7280; font-size: 14px; margin-bottom: 4px;">Ngày tạo:</div>
-                                        <div style="font-weight: 600; color: var(--text-primary);">${order.date}</div>
+                                        <div style="font-weight: 600; color: var(--text-primary);">${order.date} ${order.time || ''}</div>
                                     </div>
                                     <div>
                                         <div style="color: #6b7280; font-size: 14px; margin-bottom: 4px;">Khách hàng:</div>
                                         <div style="font-weight: 600; color: var(--text-primary);">
                                             ${customer ? customer.name : order.customerName || 'N/A'}
+                                            ${customer && customer.phone ? `<div style="font-size: 13px; font-weight: normal; color: #6b7280;">SĐT: ${escapeHtml(customer.phone)}</div>` : ''}
+                                            ${customer && customer.address ? `<div style="font-size: 13px; font-weight: normal; color: #6b7280;">Địa chỉ: ${escapeHtml(customer.address)}</div>` : ''}
                                             ${customer && customer.type === 'doanh-nghiep' ? `
                                                 <div style="font-size: 13px; color: #6b7280; margin-top: 4px;">
                                                     <div><strong>Công ty:</strong> ${customer.companyName || 'Chưa có'}</div>
@@ -8381,6 +8606,10 @@
                                             </span>
                                         </div>
                                     </div>
+                                    <div>
+                                        <div style="color: #6b7280; font-size: 14px; margin-bottom: 4px;">Phương thức thanh toán:</div>
+                                        <div style="font-weight: 600; color: var(--text-primary);">${order.paymentMethod || '-'}</div>
+                                    </div>
                                 </div>
                                 <div style="margin-top: 16px;">
                                     <div style="color: #6b7280; font-size: 14px; margin-bottom: 4px;">Tổng tiền:</div>
@@ -8397,7 +8626,7 @@
                             <!-- Danh sách sản phẩm -->
                             <div>
                                 <h4 style="margin-bottom: 16px; color: var(--text-primary);">
-                                    🛒 Sản phẩm trong đơn hàng (${order.items ? order.items.length : 0} sản phẩm)
+                                    🛒 Sản phẩm trong đơn hàng (${orderProducts.length} sản phẩm)
                                 </h4>
                                 <div style="overflow-x: auto;">
                                     <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
@@ -8436,36 +8665,40 @@
                 document.body.insertAdjacentHTML('beforeend', orderDetailHTML);
             }
             
-            // Hiển thị chi tiết công nợ khách hàng
+            // Hiển thị chi tiết công nợ khách hàng (đơn hàng + sửa chữa)
             showCustomerDebtDetail(customerId) {
                 let customer = this.demoData.customers.find(c => c.id === customerId);
+                if (!customer) customer = this.getCustomersWithDebt().find(c => c.id === customerId);
+                if (!customer) customer = this.getCustomersWithDebt().find(c => c.id === customerId);
                 
                 if (!customer) {
                     this.showNotification('Không tìm thấy khách hàng', 'error');
                     return;
                 }
                 
-                console.log('🔍 DEBUG - Customer:', customer);
-                console.log('🔍 DEBUG - All orders:', this.demoData.orders);
+                const actualDebt = this.getActualDebtForCustomer(customer);
                 
-                // Tìm tất cả đơn hàng chưa thanh toán của khách hàng (tìm theo nhiều cách)
+                // Đơn hàng chưa thanh toán
                 const unpaidOrders = this.demoData.orders.filter(order => {
-                    // Tìm theo customerId hoặc customer name
                     const matchById = order.customerId === customerId;
                     const matchByName = order.customer === customer.name || order.customerName === customer.name;
-                    
-                    const isUnpaid = order.paymentStatus === 'Công nợ' ||
-                                    order.status === 'Công nợ';
-                    
-                    console.log(`🔍 Order ${order.id}: matchById=${matchById}, matchByName=${matchByName}, isUnpaid=${isUnpaid}`);
-                    
+                    const isUnpaid = order.paymentStatus === 'Công nợ' || order.status === 'Công nợ';
                     return (matchById || matchByName) && isUnpaid;
                 });
                 
-                console.log('🔍 DEBUG - Unpaid orders found:', unpaidOrders);
+                // Phiếu sửa chữa đang nợ (Đã trả + paid < cost - đồng bộ với cột Thanh toán)
+                const unpaidRepairs = (this.demoData.repairs || []).filter(r => {
+                    if ((r.status || '') !== 'Đã trả') return false;
+                    const cost = Number(r.repairCost) || 0;
+                    const paid = Number(r.amountPaid) || 0;
+                    if (cost <= 0 || paid >= cost) return false;
+                    return r.customerId === customerId || r.customerName === customer.name || r.customerId === customer.name || r.customerName === customer.id;
+                });
                 
                 const unpaidOrdersHTML = unpaidOrders.length > 0 ? 
-                    unpaidOrders.map(order => `
+                    unpaidOrders.map(order => {
+                        const orderIndex = this.demoData.orders.findIndex(o => o.id === order.id);
+                        return `
                         <tr style="border-bottom: 1px solid #e5e7eb;">
                             <td style="padding: 12px; text-align: left;">${order.id}</td>
                             <td style="padding: 12px; text-align: left;">${order.date}</td>
@@ -8478,7 +8711,7 @@
                                 </span>
                             </td>
                             <td style="padding: 12px; text-align: center;">
-                                <button onclick="app.showOrderDetail('${order.id}')" style="
+                                <button onclick="closeModal(this.closest('div[style*=fixed]')); app.viewOrderDetails(${orderIndex})" style="
                                     background: #3b82f6; 
                                     color: white; 
                                     border: none; 
@@ -8492,8 +8725,20 @@
                                 </button>
                             </td>
                         </tr>
-                    `).join('') :
+                    `;
+                    }).join('') :
                     '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #6b7280;">Không có đơn hàng nào đang nợ</td></tr>';
+                const unpaidRepairsHTML = unpaidRepairs.length > 0 ? unpaidRepairs.map(r => {
+                    const repairIndex = this.demoData.repairs.findIndex(x => x === r);
+                    const debtAmount = Math.max(0, (Number(r.repairCost) || 0) - (Number(r.amountPaid) ?? 0));
+                    return `<tr style="border-bottom: 1px solid #e5e7eb;">
+                        <td style="padding: 12px; text-align: left;">${r.id || '-'}</td>
+                        <td style="padding: 12px; text-align: left;">${r.date || '-'}</td>
+                        <td style="padding: 12px; text-align: right; color: #dc2626; font-weight: 600;">${debtAmount.toLocaleString('vi-VN')} VNĐ</td>
+                        <td style="padding: 12px; text-align: center;"><span style="background: #f59e0b; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">Sửa chữa</span></td>
+                        <td style="padding: 12px; text-align: center;"><button onclick="closeModal(this.closest('div[style*=fixed]')); app.viewRepairDetails(${repairIndex})" style="background: #3b82f6; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 12px; font-weight: 600;">Chi tiết</button></td>
+                    </tr>`;
+                }).join('') : '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #6b7280;">Không có phiếu sửa chữa nào đang nợ</td></tr>';
                 
                 const detailHTML = `
                     <div style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1001; display: flex; justify-content: center; align-items: center;" onclick="if(event.target===this && window._modalMousedownTarget===this) closeModal(this)">
@@ -8535,7 +8780,7 @@
                                     </div>
                                     <div>
                                         <div style="color: #6b7280; font-size: 14px; margin-bottom: 4px;">Tổng công nợ:</div>
-                                        <div style="font-weight: 700; color: #dc2626; font-size: 18px;">${customer.debt.toLocaleString('vi-VN')} VNĐ</div>
+                                        <div style="font-weight: 700; color: #dc2626; font-size: 18px;">${this.getActualDebtForCustomer(customer).toLocaleString('vi-VN')} VNĐ</div>
                                     </div>
                                 </div>
                                 <div style="margin-top: 16px;">
@@ -8545,7 +8790,7 @@
                             </div>
                             
                             <!-- Danh sách đơn hàng đang nợ -->
-                            <div>
+                            <div style="margin-bottom: 24px;">
                                 <h4 style="margin-bottom: 16px; color: var(--text-primary);">
                                     📝 Đơn hàng đang nợ (${unpaidOrders.length} đơn)
                                 </h4>
@@ -8566,6 +8811,31 @@
                                     </table>
                                 </div>
                             </div>
+                            
+                            <!-- Danh sách phiếu sửa chữa đang nợ -->
+                            ${unpaidRepairs.length > 0 ? `
+                            <div style="margin-bottom: 24px;">
+                                <h4 style="margin-bottom: 16px; color: var(--text-primary);">
+                                    🔧 Phiếu sửa chữa đang nợ (${unpaidRepairs.length} phiếu)
+                                </h4>
+                                <div style="overflow-x: auto;">
+                                    <table style="width: 100%; border-collapse: collapse; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                                        <thead>
+                                            <tr style="background: #f3f4f6;">
+                                                <th style="padding: 12px; text-align: left; font-weight: 600; color: var(--text-primary);">Mã phiếu</th>
+                                                <th style="padding: 12px; text-align: left; font-weight: 600; color: var(--text-primary);">Ngày</th>
+                                                <th style="padding: 12px; text-align: right; font-weight: 600; color: var(--text-primary);">Còn nợ</th>
+                                                <th style="padding: 12px; text-align: center; font-weight: 600; color: var(--text-primary);">Loại</th>
+                                                <th style="padding: 12px; text-align: center; font-weight: 600; color: var(--text-primary);">Hành động</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${unpaidRepairsHTML}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            ` : ''}
                             
                             <div style="display: flex; gap: 12px; justify-content: space-between; margin-top: 24px;">
                                 <button onclick="app.printDebtReport('${customer.id}'); closeModal(this.closest('div[style*=fixed]'));" style="
@@ -8619,30 +8889,40 @@
                     return;
                 }
                 
-                if (customer.debt > 0) {
-                    // Chuyển từ có nợ sang đã thanh toán
-                    const oldDebt = customer.debt;
+                const actualDebt = this.getActualDebtForCustomer(customer);
+                if (actualDebt > 0) {
+                    const oldDebt = actualDebt;
                     customer.debt = 0;
                     
-                    // ĐỒNG BỘ 2 CHIỀU: Cập nhật tất cả đơn hàng chưa thanh toán của khách hàng này
+                    // ĐỒNG BỘ 2 CHIỀU: Cập nhật đơn hàng chưa thanh toán
                     const unpaidOrders = this.demoData.orders.filter(order => 
-                        order.customerId === customerId && 
+                        (order.customerId === customerId || order.customerName === customer.name) && 
                         (order.paymentStatus === 'Công nợ')
                     );
+                    unpaidOrders.forEach(order => { order.paymentStatus = 'Đã thanh toán'; });
                     
-                    let updatedOrdersCount = 0;
-                    unpaidOrders.forEach(order => {
-                        order.paymentStatus = 'Đã thanh toán';
-                        updatedOrdersCount++;
-                        console.log(`🔄 Đồng bộ: Đơn hàng ${order.id} → Đã thanh toán`);
+                    // ĐỒNG BỘ 2 CHIỀU: Cập nhật phiếu sửa chữa chưa thanh toán (paid < cost)
+                    const unpaidRepairs = (this.demoData.repairs || []).filter(r => {
+                        if ((r.status || '') !== 'Đã trả') return false;
+                        const cost = Number(r.repairCost) || 0;
+                        const paid = Number(r.amountPaid) || 0;
+                        if (cost <= 0 || paid >= cost) return false;
+                        return r.customerId === customerId || r.customerName === customer.name;
                     });
+                    unpaidRepairs.forEach(r => {
+                        r.amountPaid = Number(r.repairCost) || 0;
+                        r.paymentStatus = 'Đã thanh toán';
+                    });
+                    
+                    const updatedOrdersCount = unpaidOrders.length;
                     
                     this.saveToLocalStorage();
                     this.refreshAllCustomerDisplays();
                     
-                    const message = updatedOrdersCount > 0 
-                        ? `Đã đánh dấu ${customer.name} thanh toán xong ${oldDebt.toLocaleString('vi-VN')} VNĐ và cập nhật ${updatedOrdersCount} đơn hàng thành "Đã thanh toán"`
-                        : `Đã đánh dấu ${customer.name} đã thanh toán toàn bộ công nợ ${oldDebt.toLocaleString('vi-VN')} VNĐ`;
+                    const msgParts = [`Đã đánh dấu ${customer.name} thanh toán xong ${oldDebt.toLocaleString('vi-VN')} VNĐ`];
+                    if (updatedOrdersCount > 0) msgParts.push(`${updatedOrdersCount} đơn hàng`);
+                    if (unpaidRepairs.length > 0) msgParts.push(`${unpaidRepairs.length} phiếu sửa chữa`);
+                    const message = msgParts.length > 1 ? msgParts.join(', ') + ' thành "Đã thanh toán"' : msgParts[0];
                     
                     this.showNotification(message, 'success');
                     this.loadPage('debts');
@@ -8787,7 +9067,7 @@
             
             showLowStockCopyModal() {
                 const getStock = (p) => (p.hasImei && p.imeis) ? (p.stock != null ? p.stock : p.imeis.length) : (p.stock || 0);
-                const getMinStock = (p) => (p.hasImei && p.imeis) ? 0 : (p.minStock ?? 10);
+                const getMinStock = (p) => (p.hasImei && p.imeis) ? 0 : (p.minStock ?? 1);
                 const lowStockProducts = this.demoData.products.filter(p => {
                     const min = getMinStock(p);
                     return min > 0 && getStock(p) <= min;
@@ -8812,7 +9092,12 @@
                 `;
                 document.body.insertAdjacentHTML('beforeend', modalHTML);
             }
-            
+
+            setInventoryStatusFilter(filter) {
+                this.inventoryStatusFilter = filter || 'all';
+                this.loadPage('inventory');
+            }
+
             showStockUpdateForm() {
                 const productOptions = this.demoData.products.map(p => 
                     `<option value="${p.id}">${p.name} - Tồn kho: ${p.stock}</option>`
@@ -9654,12 +9939,11 @@
                     const qty = ordProduct.quantity || 1;
                     if (prod.hasImei && prod.imeis && Array.isArray(prod.imeis)) {
                         const toSell = Math.min(qty, prod.imeis.length);
-                        const soldImeis = prod.imeis.splice(0, toSell);
-                        ordProduct.soldImeis = soldImeis;
+                        ordProduct.soldImeis = prod.imeis.slice(0, toSell);
                     }
                     prod.stock = Math.max(0, (prod.stock || (prod.hasImei && prod.imeis ? prod.imeis.length : 0)) - qty);
                     ordProduct.productId = ordProduct.id;
-                    const minS = (prod.hasImei && prod.imeis) ? 0 : (prod.minStock ?? 10);
+                    const minS = (prod.hasImei && prod.imeis) ? 0 : (prod.minStock ?? 1);
                     const stockS = (prod.stock ?? (prod.hasImei && prod.imeis ? prod.imeis.length : 0));
                     if (minS > 0 && stockS <= minS) {
                         lowStockAlerts.push({ name: prod.name, current: stockS, minimum: minS });
@@ -9764,12 +10048,22 @@
                     }
                 }
                 
-                const productsList = order.products.map(p => 
-                    `<div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
-                        <span>${p.name} x ${p.quantity}</span>
-                        <span>${(p.quantity * p.price).toLocaleString('vi-VN')} VNĐ</span>
-                    </div>`
-                ).join('');
+                const productsList = order.products.map(p => {
+                    const prod = this.demoData.products.find(x => x.id === (p.id || p.productId));
+                    const name = p.name || p.productName || (prod ? prod.name : '-');
+                    const pid = p.id || p.productId || (prod ? prod.id : '-');
+                    const soldImeis = p.soldImeis && Array.isArray(p.soldImeis) ? p.soldImeis : [];
+                    const qty = p.quantity || 1;
+                    const price = p.price != null && !isNaN(p.price) ? p.price : (prod ? prod.price : 0);
+                    const subtotal = qty * price;
+                    const imeiLine = soldImeis.length > 0 ? `<div style="font-size: 12px; color: #1d4ed8; margin-top: 2px;">IMEI: ${soldImeis.map(i => escapeHtml(i)).join(', ')}</div>` : '';
+                    return `<div style="padding: 8px 0; border-bottom: 1px solid #e5e7eb;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                            <div><strong>${escapeHtml(name)}</strong> x ${qty}<br><span style="font-size: 12px; color: #6b7280;">Mã: ${escapeHtml(pid)}</span>${imeiLine}</div>
+                            <span style="font-weight: 600;">${subtotal.toLocaleString('vi-VN')} VNĐ</span>
+                        </div>
+                    </div>`;
+                }).join('');
                 const orderPaid = order.amountPaid != null ? order.amountPaid : (order.paymentStatus === 'Đã thanh toán' ? order.total : 0);
                 const orderDebtDisplay = Math.max(0, (order.total || 0) - orderPaid);
                 const paidDebtRows = (orderPaid > 0 || orderDebtDisplay > 0) ? `<div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; color: #6b7280;"><span>Khách thanh toán:</span><span>${orderPaid.toLocaleString('vi-VN')} đ</span></div><div style="display: flex; justify-content: space-between; padding: 6px 0; font-size: 14px; color: #6b7280;"><span>Còn nợ:</span><span>${orderDebtDisplay.toLocaleString('vi-VN')} đ</span></div>` : '';
@@ -9780,11 +10074,14 @@
                             <h3 style="margin-bottom: 24px; color: var(--text-primary);">Chi tiết đơn hàng ${order.id}</h3>
                             
                             <div style="margin-bottom: 16px;">
-                                <strong>Khách hàng:</strong> ${customerDisplay}${businessInfo}<br>
-                                <strong>Thời gian:</strong> ${order.date} ${order.time}<br>
+                                <strong>Khách hàng:</strong> ${customerDisplay}${businessInfo}
+                                ${customer && customer.phone ? `<br><strong>SĐT:</strong> ${escapeHtml(customer.phone)}` : ''}
+                                ${customer && customer.address ? `<br><strong>Địa chỉ:</strong> ${escapeHtml(customer.address)}` : ''}
+                                <br><strong>Thời gian:</strong> ${order.date} ${order.time || ''}<br>
                                 <strong>Trạng thái:</strong> ${order.status}<br>
                                 <strong>Thanh toán:</strong> ${order.paymentMethod}
-                                ${order.notes ? `<br><strong>Ghi chú:</strong> ${order.notes}` : ''}
+                                ${order.paymentStatus ? ` · <span style="background: ${order.paymentStatus === 'Đã thanh toán' ? '#dcfce7' : '#fef3c7'}; padding: 2px 6px; border-radius: 4px;">${order.paymentStatus}</span>` : ''}
+                                ${order.notes ? `<br><strong>Ghi chú:</strong> ${escapeHtml(order.notes)}` : ''}
                             </div>
                             
                             <div style="margin-bottom: 16px;">
@@ -10042,12 +10339,7 @@
                 (order.products || []).forEach(op => {
                     const prod = productsData.find(p => p.id === (op.id || op.productId));
                     if (!prod || !(op.quantity > 0)) return;
-                    if (op.soldImeis && Array.isArray(op.soldImeis)) {
-                        prod.imeis = prod.imeis || [];
-                        op.soldImeis.forEach(imei => prod.imeis.push(imei));
-                    } else {
-                        prod.stock = (prod.stock || 0) + op.quantity;
-                    }
+                    prod.stock = (prod.stock || 0) + op.quantity;
                 });
 
                 for (const pr of products) {
@@ -10056,8 +10348,7 @@
                     const qty = pr.quantity || 1;
                     if (prod.hasImei && prod.imeis && Array.isArray(prod.imeis)) {
                         const toSell = Math.min(qty, prod.imeis.length);
-                        const soldImeis = prod.imeis.splice(0, toSell);
-                        pr.soldImeis = soldImeis;
+                        pr.soldImeis = prod.imeis.slice(0, toSell);
                     }
                     prod.stock = Math.max(0, (prod.stock || (prod.hasImei && prod.imeis ? prod.imeis.length : 0)) - qty);
                     pr.productId = pr.id || pr.productId;
@@ -10105,14 +10396,11 @@
                 if (confirm(`Bạn có chắc muốn xóa đơn hàng ${order.id}?`)) {
                     const products = this.demoData.products || [];
                     (order.products || []).forEach(op => {
-                        const prod = products.find(p => p.id === (op.id || op.productId));
+                        const pid = op.id || op.productId;
+                        const prod = products.find(p => p.id === pid);
                         if (!prod || !(op.quantity > 0)) return;
-                        if (op.soldImeis && Array.isArray(op.soldImeis)) {
-                            prod.imeis = prod.imeis || [];
-                            op.soldImeis.forEach(imei => prod.imeis.push(imei));
-                        } else {
-                            prod.stock = (prod.stock || 0) + op.quantity;
-                        }
+                        // IMEI giữ nguyên ở sản phẩm, chỉ hoàn trả tồn kho (stock)
+                        prod.stock = (prod.stock || 0) + op.quantity;
                     });
                     const customer = this.demoData.customers.find(c => c.id === order.customerId || c.name === order.customerName);
                     const orderDebt = Math.max(0, (order.total || 0) - (order.amountPaid != null ? order.amountPaid : (order.paymentStatus === 'Đã thanh toán' ? order.total : 0)));
@@ -10155,12 +10443,7 @@
                     (order.products || []).forEach(op => {
                         const p = products.find(pr => pr.id === (op.id || op.productId));
                         if (!p || !(op.quantity > 0)) return;
-                        if (op.soldImeis && Array.isArray(op.soldImeis)) {
-                            p.imeis = p.imeis || [];
-                            op.soldImeis.forEach(imei => p.imeis.push(imei));
-                        } else {
-                            p.stock = (p.stock || 0) + op.quantity;
-                        }
+                        p.stock = (p.stock || 0) + op.quantity;
                     });
                 });
                 (this.demoData.sales || []).forEach(sale => {
@@ -10372,10 +10655,11 @@
             }
 
             searchOrders(searchTerm) {
+                const q = (searchTerm || '').trim();
                 const rows = document.querySelectorAll('#orders-table tbody tr');
                 rows.forEach(row => {
-                    const text = row.textContent.toLowerCase();
-                    const isVisible = text.includes(searchTerm.toLowerCase());
+                    const text = row.textContent || '';
+                    const isVisible = !q || this.searchMatch(text, q);
                     row.style.display = isVisible ? '' : 'none';
                 });
             }
@@ -12277,7 +12561,9 @@
                 if (header) header.innerHTML = `<span>🔧</span> Phiếu sửa chữa trong khoảng chọn (${filteredRepairs.length})`;
                 container.innerHTML = filteredRepairs.map(r => {
                     const rev = (r.status || '') === 'Đã trả' ? (Number(r.repairCost) || 0) : 0;
-                    const payStatus = (r.status || '') === 'Đã trả' ? (r.paymentStatus || ((r.amountPaid >= (Number(r.repairCost) || 0)) ? 'Đã thanh toán' : 'Công nợ')) : '-';
+                    const cost = Number(r.repairCost) || 0;
+                    const paid = Number(r.amountPaid) || 0;
+                    const payStatus = (r.status || '') === 'Đã trả' ? (cost > 0 && paid < cost ? 'Công nợ' : 'Đã thanh toán') : '-';
                     return `<tr style="border-bottom: 1px solid #e5e7eb;">
                         <td style="padding: 12px;">${(r.id || '').replace(/</g, '&lt;')}</td>
                         <td style="padding: 12px;">${(r.customerName || '-').replace(/</g, '&lt;')}</td>
