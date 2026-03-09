@@ -2589,11 +2589,11 @@
                                 ${order.paymentStatus === 'Đã thanh toán' ? '✓ Đã TT' : 'Công nợ'}
                             </button>
                         </td>
-                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb;">
-                            <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
-                                <button onclick="app.showPrintOptionsPopup(${originalIndex})" style="background: var(--primary-green); color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px; white-space: nowrap;" title="In hóa đơn">In</button>
-                                <button onclick="app.viewOrderDetails(${originalIndex})" style="background: var(--primary-blue); color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap;">Chi tiết</button>
-                                <button onclick="app.deleteOrder(${originalIndex})" style="background: #ef4444; color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap;" title="Xóa đơn">Xóa</button>
+                        <td style="padding: 12px; border-bottom: 1px solid #e5e7eb; white-space: nowrap;">
+                            <div style="display: flex; gap: 6px; flex-wrap: nowrap; align-items: center;">
+                                <button onclick="app.showPrintOptionsPopup(${originalIndex})" style="flex-shrink: 0; background: var(--primary-green); color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-weight: 600; font-size: 12px; white-space: nowrap;" title="In hóa đơn">In</button>
+                                <button onclick="app.viewOrderDetails(${originalIndex})" style="flex-shrink: 0; background: var(--primary-blue); color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap;">Chi tiết</button>
+                                <button onclick="app.deleteOrder(${originalIndex})" style="flex-shrink: 0; background: #ef4444; color: white; border: none; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 12px; white-space: nowrap;" title="Xóa đơn">Xóa</button>
                             </div>
                         </td>
                     </tr>
@@ -2684,7 +2684,7 @@
                                                 <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Tổng tiền</th>
                                                 <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">Thanh toán</th>
                                                 <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600;">TT Nhanh</th>
-                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; min-width: 140px;">Thao tác</th>
+                                                <th style="padding: 12px; text-align: left; border-bottom: 2px solid #e5e7eb; font-weight: 600; min-width: 200px;">Thao tác</th>
                                             </tr>
                                         </thead>
                                         <tbody>
