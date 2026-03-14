@@ -541,27 +541,42 @@
             .products-page-compact #products-selected-count {
                 display: none !important;
             }
-            /* Mobile: hiện danh sách div, ẩn bảng */
+            /* Mobile: hiện danh sách div, ẩn bảng - style giống phần bán hàng */
+            .products-page-compact .products-table-container {
+                margin: 8px 12px 12px !important;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+            }
             .products-page-compact .products-mobile-list {
                 display: block !important;
+                background: #f8fafc !important;
+                padding: 8px 12px 12px !important;
+                -webkit-overflow-scrolling: touch;
             }
             .products-page-compact .products-table-desktop {
                 display: none !important;
             }
-            /* Layout mỗi item: trái tên+MSP (xuống dòng sau 15 ký tự), phải giá+tồn */
+            /* Layout mỗi item: giống pos-product-card bán hàng */
             .products-mobile-item {
                 display: flex;
                 align-items: flex-start;
                 justify-content: space-between;
                 gap: 12px;
-                padding: 14px 16px;
-                border-bottom: 1px solid #f1f5f9;
+                padding: 12px 14px;
+                border: 2px solid #e5e7eb;
+                border-radius: 10px;
+                margin-bottom: 10px;
                 background: white;
                 cursor: pointer;
                 -webkit-tap-highlight-color: transparent;
+                transition: border-color 0.15s, background 0.15s;
             }
-            .products-mobile-item:nth-child(even) {
-                background: #fafbfc;
+            .products-mobile-item:hover {
+                border-color: #059669;
+                background: #ecfdf5;
+            }
+            .products-mobile-item:active {
+                border-color: #059669;
+                background: #ecfdf5;
             }
             .products-mobile-left {
                 flex: 1;
@@ -570,33 +585,34 @@
             }
             .products-mobile-name {
                 font-weight: 600;
-                font-size: 15px;
+                font-size: 14px;
                 color: #1f2937;
                 max-width: 15ch;
                 word-wrap: break-word;
                 overflow-wrap: break-word;
                 word-break: break-word;
-                line-height: 1.35;
+                line-height: 1.4;
             }
             .products-mobile-msp {
                 font-size: 12px;
                 color: #6b7280;
                 margin-top: 4px;
+                line-height: 1.4;
             }
             .products-mobile-right {
                 flex-shrink: 0;
                 text-align: right;
                 display: flex;
                 flex-direction: column;
-                gap: 2px;
+                gap: 4px;
             }
             .products-mobile-price {
                 font-weight: 600;
-                font-size: 14px;
-                color: #1f2937;
+                font-size: 15px;
+                color: #059669;
             }
             .products-mobile-stock {
-                font-size: 13px;
+                font-size: 12px;
                 color: #6b7280;
             }
             .products-mobile-empty {
